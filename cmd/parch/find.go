@@ -40,11 +40,11 @@ func runFindCommand(args []string) {
 	if err != nil {
 		die(err)
 	}
-	query, err := textlayer.ParseQuery(fs.Arg(0))
+	matcher, err := textlayer.Compile(fs.Arg(0), textlayer.MatchOptions{})
 	if err != nil {
 		die(err)
 	}
-	hits := query.Find(layer)
+	hits := textlayer.FindAll(matcher, layer)
 
 	if *asJSON {
 		type jsonHit struct {
@@ -63,7 +63,7 @@ func runFindCommand(args []string) {
 			URL        string    `json:"url"`
 			Hits       []jsonHit `json:"hits"`
 		}{
-			Query:      query.Raw,
+			Query:      fs.Arg(0),
 			Normalizer: textlayer.NormVersion,
 			Archive:    fs.Arg(1),
 			URL:        layer.URL,

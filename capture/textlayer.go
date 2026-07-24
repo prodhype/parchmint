@@ -65,7 +65,7 @@ type markEntry struct {
 // cacheRuns=true. Marks land in the DOM before serialization, so every
 // backend shows them — yellow pixels in screenshots and PDFs, <mark>
 // elements in HTML.
-func applyHighlights(ctx context.Context, payload *textLayerPayload, phrases []string) (int, error) {
+func applyHighlights(ctx context.Context, payload *textLayerPayload, phrases []string, match textlayer.MatchOptions) (int, error) {
 	var blocks []textlayer.Block
 	if err := json.Unmarshal(payload.Blocks, &blocks); err != nil {
 		return 0, errors.Wrap(err, "parse blocks")
@@ -73,12 +73,12 @@ func applyHighlights(ctx context.Context, payload *textLayerPayload, phrases []s
 
 	var hits []textlayer.Hit
 	for _, phrase := range phrases {
-		q, err := textlayer.ParseQuery(phrase)
+		m, err := textlayer.Compile(phrase, match)
 		if err != nil {
 			return 0, err
 		}
 		for i := range blocks {
-			hits = append(hits, q.FindBlock(&blocks[i])...)
+			hits = append(hits, m.FindBlock(&blocks[i])...)
 		}
 	}
 	if len(hits) == 0 {

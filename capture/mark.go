@@ -22,6 +22,9 @@ type MarkOptions struct {
 	Color string
 	// Stroke outlines them (empty = no outline).
 	Stroke string
+	// Match selects how the phrases match (zero value = the default
+	// phrase matcher).
+	Match textlayer.MatchOptions
 }
 
 // MarkResult reports what MarkArchive did.
@@ -67,7 +70,7 @@ func MarkArchive(ctx context.Context, cfg runner.Config, fileURL string, phrases
 	// the walk can't reach their content to wrap marks (and outerHTML would
 	// not serialize a live iframe document anyway). Rare — the capture
 	// pipeline freezes most iframes to images — but honestly reported.
-	if n := frameBlockMatches(layer, phrases); n > 0 {
+	if n := frameBlockMatches(layer, phrases, opts.Match); n > 0 {
 		log.With("matches", n).Warn("matches inside same-origin iframes are not highlighted in the marked copy")
 	}
 
@@ -84,7 +87,7 @@ func MarkArchive(ctx context.Context, cfg runner.Config, fileURL string, phrases
 		if err != nil {
 			return err
 		}
-		n, err := applyHighlights(ctx, payload, phrases)
+		n, err := applyHighlights(ctx, payload, phrases, opts.Match)
 		if err != nil {
 			return err
 		}
@@ -92,7 +95,7 @@ func MarkArchive(ctx context.Context, cfg runner.Config, fileURL string, phrases
 
 		// OCR text: matched against the EMBEDDED layer's ocr blocks (a
 		// fresh walk cannot see inside images), baked via canvas.
-		specs, ocrMatches, err := ocrMarkSpecs(layer, phrases)
+		specs, ocrMatches, err := ocrMarkSpecs(layer, phrases, opts.Match)
 		if err != nil {
 			return err
 		}
@@ -140,10 +143,10 @@ func MarkArchive(ctx context.Context, cfg runner.Config, fileURL string, phrases
 // frameBlockMatches counts phrase matches that fall inside same-origin
 // iframe blocks of the layer (Frame set) — the matches a marked copy
 // cannot highlight.
-func frameBlockMatches(layer *textlayer.Layer, phrases []string) int {
+func frameBlockMatches(layer *textlayer.Layer, phrases []string, match textlayer.MatchOptions) int {
 	n := 0
 	for _, phrase := range phrases {
-		q, err := textlayer.ParseQuery(phrase)
+		m, err := textlayer.Compile(phrase, match)
 		if err != nil {
 			continue
 		}
@@ -151,7 +154,7 @@ func frameBlockMatches(layer *textlayer.Layer, phrases []string) int {
 			if layer.Blocks[i].Frame == "" {
 				continue
 			}
-			n += len(q.FindBlock(&layer.Blocks[i]))
+			n += len(m.FindBlock(&layer.Blocks[i]))
 		}
 	}
 	return n
@@ -177,11 +180,11 @@ const inlineLinkedStylesheets = `(() => {
 // bake specs: image hash → highlight rects as fractions of the image box
 // (block.Box IS the source image's recorded box, so fractions transfer to
 // natural resolution unchanged).
-func ocrMarkSpecs(layer *textlayer.Layer, phrases []string) (map[string][][4]float64, int, error) {
+func ocrMarkSpecs(layer *textlayer.Layer, phrases []string, match textlayer.MatchOptions) (map[string][][4]float64, int, error) {
 	specs := map[string][][4]float64{}
 	matches := 0
 	for _, phrase := range phrases {
-		q, err := textlayer.ParseQuery(phrase)
+		q, err := textlayer.Compile(phrase, match)
 		if err != nil {
 			return nil, 0, err
 		}

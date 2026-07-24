@@ -18,6 +18,9 @@ type PDFOptions struct {
 	// Color fills the highlight behind matched OCR words (the invisible
 	// overlay text carries the selection; this makes matches visible).
 	Color string
+	// Match selects how the phrases match (zero value = the default
+	// phrase matcher).
+	Match textlayer.MatchOptions
 }
 
 // PDFResult reports what ExportPDF produced.
@@ -67,7 +70,7 @@ func ExportPDF(ctx context.Context, cfg runner.Config, fileURL string, phrases [
 			if err != nil {
 				return err
 			}
-			n, err := applyHighlights(ctx, payload, phrases)
+			n, err := applyHighlights(ctx, payload, phrases, opts.Match)
 			if err != nil {
 				return err
 			}
@@ -77,7 +80,7 @@ func ExportPDF(ctx context.Context, cfg runner.Config, fileURL string, phrases [
 		// OCR image overlays: invisible selectable text for every OCR word,
 		// yellow background for matched ones. Injected before printToPDF so
 		// Chrome renders them into the PDF.
-		specs, ocrMatches := ocrOverlaySpecs(layer, phrases)
+		specs, ocrMatches := ocrOverlaySpecs(layer, phrases, opts.Match)
 		res.OCRMatches = ocrMatches
 		if len(specs) > 0 {
 			var stats struct {
@@ -140,10 +143,10 @@ type ocrWord struct {
 // ocrOverlaySpecs turns the layer's OCR blocks into per-image overlay word
 // lists (keyed by image hash), flagging words that match any phrase. The
 // int returned is the number of phrase matches inside images.
-func ocrOverlaySpecs(layer *textlayer.Layer, phrases []string) (map[string][]ocrWord, int) {
-	queries := make([]*textlayer.Query, 0, len(phrases))
+func ocrOverlaySpecs(layer *textlayer.Layer, phrases []string, match textlayer.MatchOptions) (map[string][]ocrWord, int) {
+	queries := make([]textlayer.Matcher, 0, len(phrases))
 	for _, p := range phrases {
-		if q, err := textlayer.ParseQuery(p); err == nil {
+		if q, err := textlayer.Compile(p, match); err == nil {
 			queries = append(queries, q)
 		}
 	}

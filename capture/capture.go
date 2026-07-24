@@ -12,6 +12,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/goodblaster/errors"
 	"github.com/goodblaster/parchmint/internal/log"
+	"github.com/goodblaster/parchmint/textlayer"
 	"github.com/goodblaster/pscription/pipeline"
 	"github.com/goodblaster/pscription/runner"
 	js "github.com/goodblaster/pscription/scripts"
@@ -50,6 +51,10 @@ type Options struct {
 	// <mark data-parchmint> before serialization — same matcher as
 	// `parch find` — so highlights appear in every backend's output.
 	Highlight []string
+
+	// Match selects how the Highlight phrases match (zero value = the
+	// default phrase matcher).
+	Match textlayer.MatchOptions
 }
 
 // Backend serializes the current page state into a snapshot.
@@ -143,7 +148,7 @@ func captureOnce(ctx context.Context, url string, cfg runner.Config, recipe pipe
 				return nil
 			}
 			if len(opts.Highlight) > 0 {
-				if _, err := applyHighlights(ctx, payload, opts.Highlight); err != nil {
+				if _, err := applyHighlights(ctx, payload, opts.Highlight, opts.Match); err != nil {
 					log.WithError(err).Warn("highlighting failed; archiving without marks")
 				}
 			}

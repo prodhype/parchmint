@@ -262,11 +262,7 @@ func (q *Query) FindBlock(b *Block) []Hit {
 
 // Find returns every match across the layer, in block order.
 func (q *Query) Find(layer *Layer) []Hit {
-	var hits []Hit
-	for i := range layer.Blocks {
-		hits = append(hits, q.FindBlock(&layer.Blocks[i])...)
-	}
-	return hits
+	return FindAll(q, layer)
 }
 
 // MergeHitRanges groups hits by block id and merges overlapping/adjacent
