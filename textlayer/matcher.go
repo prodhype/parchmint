@@ -3,6 +3,7 @@ package textlayer
 import (
 	"fmt"
 	"regexp"
+	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -45,6 +46,23 @@ type MatchOptions struct {
 	// "rn" reads as "m". Words shorter than minFuzzyLen never fuzz (too
 	// many false hits); they must match exactly.
 	Fuzzy int
+
+	// WholeWord (-w) requires every query word to equal a whole page
+	// word — the opt-out of the deliberately loose substring default
+	// ("phone" no longer hits "iPhone"). Applies to phrase and Fixed
+	// modes; regex has \b.
+	WholeWord bool
+
+	// CaseSens (-s) keeps case on both sides of the fold (accents,
+	// quotes, dashes, and punctuation are still folded in phrase mode).
+	// Applies to phrase, Fuzzy, and Fixed modes; regex is case-sensitive
+	// already.
+	CaseSens bool
+
+	// Fixed (-F) matches the query as a literal substring of the raw
+	// block text: no tokenization, no punctuation-insensitivity, no `*`
+	// wildcard. Case-insensitive like the default unless CaseSens.
+	Fixed bool
 }
 
 // maxFuzzy caps the edit-distance budget: beyond 2–3 nearly everything
@@ -57,14 +75,14 @@ const minFuzzyLen = 4
 
 // Compile builds the Matcher for a query under the given options.
 func Compile(query string, opts MatchOptions) (Matcher, error) {
-	if opts.Fuzzy != 0 {
-		if opts.Regex {
-			return nil, fmt.Errorf("regex and fuzzy matching are mutually exclusive")
-		}
-		if opts.Fuzzy < 0 || opts.Fuzzy > maxFuzzy {
-			return nil, fmt.Errorf("fuzzy distance must be between 1 and %d, got %d", maxFuzzy, opts.Fuzzy)
-		}
-		toks := Tokenize(query, false)
+	if err := opts.validate(); err != nil {
+		return nil, err
+	}
+	switch {
+	case opts.Fixed:
+		return fixedMatcher{needle: []rune(query), caseSens: opts.CaseSens, wholeWord: opts.WholeWord}, nil
+	case opts.Fuzzy != 0:
+		toks := tokenize(query, false, opts.CaseSens)
 		if len(toks) == 0 {
 			return nil, fmt.Errorf("query %q has no searchable tokens", query)
 		}
@@ -72,9 +90,8 @@ func Compile(query string, opts MatchOptions) (Matcher, error) {
 		for i, t := range toks {
 			words[i] = t.Norm
 		}
-		return fuzzyMatcher{words: words, dist: opts.Fuzzy}, nil
-	}
-	if opts.Regex {
+		return fuzzyMatcher{words: words, dist: opts.Fuzzy, caseSens: opts.CaseSens}, nil
+	case opts.Regex:
 		pattern := query
 		if opts.IgnoreCase {
 			pattern = "(?i)" + pattern
@@ -84,8 +101,33 @@ func Compile(query string, opts MatchOptions) (Matcher, error) {
 			return nil, fmt.Errorf("bad regex %q: %w", query, err)
 		}
 		return regexMatcher{re: re}, nil
+	default:
+		return parsePhrase(query, opts.WholeWord, opts.CaseSens)
 	}
-	return ParseQuery(query)
+}
+
+// validate rejects option combinations that would silently mean
+// something other than what was asked.
+func (opts MatchOptions) validate() error {
+	if opts.Regex && opts.Fixed {
+		return fmt.Errorf("regex (-e) and fixed (-F) are mutually exclusive")
+	}
+	if opts.Regex && opts.Fuzzy != 0 {
+		return fmt.Errorf("regex (-e) and fuzzy (-z) are mutually exclusive")
+	}
+	if opts.Fixed && opts.Fuzzy != 0 {
+		return fmt.Errorf("fixed (-F) and fuzzy (-z) are mutually exclusive")
+	}
+	if opts.Regex && opts.WholeWord {
+		return fmt.Errorf("whole-word (-w) does not apply to regex; use \\b in the pattern")
+	}
+	if opts.Regex && opts.CaseSens {
+		return fmt.Errorf("-s does not apply to regex, which is case-sensitive unless -i")
+	}
+	if opts.Fuzzy != 0 && (opts.Fuzzy < 0 || opts.Fuzzy > maxFuzzy) {
+		return fmt.Errorf("fuzzy distance must be between 1 and %d, got %d", maxFuzzy, opts.Fuzzy)
+	}
+	return nil
 }
 
 // regexMatcher matches a regular expression against raw Block.Text, one
@@ -118,12 +160,13 @@ func (m regexMatcher) FindBlock(b *Block) []Hit {
 // there is no meaningful sub-word range when the word only nearly
 // matched.
 type fuzzyMatcher struct {
-	words []string
-	dist  int
+	words    []string
+	dist     int
+	caseSens bool
 }
 
 func (m fuzzyMatcher) FindBlock(b *Block) []Hit {
-	toks := Tokenize(b.Text, false)
+	toks := tokenize(b.Text, false, m.caseSens)
 	var hits []Hit
 	for i := 0; i+len(m.words) <= len(toks); i++ {
 		ok := true
@@ -185,6 +228,68 @@ func withinLevenshtein(a, b []rune, max int) bool {
 		prev, cur = cur, prev
 	}
 	return prev[len(a)] <= max
+}
+
+// fixedMatcher matches the query as a literal substring of raw
+// Block.Text — what grep -F is to grep. No tokenization means no
+// punctuation-insensitivity and no `*` wildcard; matching "-foo" or
+// "C++" works exactly as typed. Comparison is rune-by-rune (simple
+// ToLower when case-insensitive), so offsets never shift under folding;
+// found matches are non-overlapping, like grep.
+type fixedMatcher struct {
+	needle    []rune
+	caseSens  bool
+	wholeWord bool
+}
+
+func (m fixedMatcher) FindBlock(b *Block) []Hit {
+	if len(m.needle) == 0 {
+		return nil
+	}
+	text := []rune(b.Text)
+	if len(text) < len(m.needle) {
+		return nil
+	}
+	// Cumulative UTF-16 offset of each rune — Hits live in UTF-16.
+	offs := make([]int, len(text)+1)
+	for i, r := range text {
+		n := utf16.RuneLen(r)
+		if n < 0 {
+			n = 1
+		}
+		offs[i+1] = offs[i] + n
+	}
+	eq := func(a, b rune) bool {
+		if m.caseSens {
+			return a == b
+		}
+		return a == b || unicode.ToLower(a) == unicode.ToLower(b)
+	}
+	isWordRune := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+
+	var hits []Hit
+	for i := 0; i+len(m.needle) <= len(text); {
+		ok := true
+		for j, qr := range m.needle {
+			if !eq(text[i+j], qr) {
+				ok = false
+				break
+			}
+		}
+		if ok && m.wholeWord {
+			end := i + len(m.needle)
+			if (i > 0 && isWordRune(text[i-1])) || (end < len(text) && isWordRune(text[end])) {
+				ok = false
+			}
+		}
+		if ok {
+			hits = append(hits, Hit{Block: b, Start: offs[i], End: offs[i+len(m.needle)]})
+			i += len(m.needle)
+		} else {
+			i++
+		}
+	}
+	return hits
 }
 
 // utf16Offset returns a converter from UTF-8 byte offsets in s to UTF-16

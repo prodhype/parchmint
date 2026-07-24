@@ -155,6 +155,69 @@ func TestFuzzyValidation(t *testing.T) {
 	}
 }
 
+func TestModifiers(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		opts  MatchOptions
+		text  string
+		want  []string
+	}{
+		// -w: whole word flips the loose substring default.
+		{"whole word blocks substring", "phone", MatchOptions{WholeWord: true}, "Buy the new iPhone today", nil},
+		{"whole word still matches", "phone", MatchOptions{WholeWord: true}, "an old phone here", []string{"phone"}},
+		{"whole word phrase", "brown fox", MatchOptions{WholeWord: true}, "the brown foxes ran", nil},
+		{"whole word wildcard spans token", "trans*ion", MatchOptions{WholeWord: true}, "the transaction posted", []string{"transaction"}},
+		{"whole word wildcard partial", "rans*io", MatchOptions{WholeWord: true}, "the transaction posted", nil},
+		// -s: case-sensitive, accents still fold.
+		{"case-sensitive blocks fold", "Apple", MatchOptions{CaseSens: true}, "an apple a day", nil},
+		{"case-sensitive matches", "Apple", MatchOptions{CaseSens: true}, "an Apple a day", []string{"Apple"}},
+		{"case-sensitive keeps accent fold", "CAFE", MatchOptions{CaseSens: true}, "at the CAFÉ", []string{"CAFÉ"}},
+		// -F: literal raw substring.
+		{"fixed literal punctuation", "state-of-the-art", MatchOptions{Fixed: true}, "a state-of-the-art rig", []string{"state-of-the-art"}},
+		{"fixed star is literal", "2*3", MatchOptions{Fixed: true}, "compute 2*3 now", []string{"2*3"}},
+		{"fixed star does not bridge", "apple*card", MatchOptions{Fixed: true}, "an Apple Gift Card here", nil},
+		{"fixed leading dash", "-foo", MatchOptions{Fixed: true}, "flag -foo given", []string{"-foo"}},
+		{"fixed case-insensitive default", "iphone", MatchOptions{Fixed: true}, "the iPhone", []string{"iPhone"}},
+		{"fixed case-sensitive", "iphone", MatchOptions{Fixed: true, CaseSens: true}, "the iPhone", nil},
+		{"fixed no punctuation folding", "hello world", MatchOptions{Fixed: true}, "Hello, world!", nil},
+		{"fixed whole word", "art", MatchOptions{Fixed: true, WholeWord: true}, "art of the artful", []string{"art"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compileStrings(t, tt.query, tt.opts, tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("hit %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestModifierCombos(t *testing.T) {
+	bad := []MatchOptions{
+		{Regex: true, Fixed: true},
+		{Regex: true, Fuzzy: 1},
+		{Fixed: true, Fuzzy: 1},
+		{Regex: true, WholeWord: true},
+		{Regex: true, CaseSens: true},
+	}
+	for _, opts := range bad {
+		if _, err := Compile("word", opts); err == nil {
+			t.Errorf("expected error for %+v", opts)
+		}
+	}
+	// Fuzzy respects -s.
+	got := compileStrings(t, "Music", MatchOptions{Fuzzy: 1, CaseSens: true}, "MUSI here and Musi there")
+	if len(got) != 1 || got[0] != "Musi" {
+		t.Errorf("fuzzy case-sensitive: got %v, want [Musi]", got)
+	}
+}
+
 func TestFindAll(t *testing.T) {
 	layer := &Layer{Blocks: []Block{
 		{ID: 0, Text: "the quick brown fox"},

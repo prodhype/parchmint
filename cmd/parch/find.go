@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/goodblaster/parchmint/textlayer"
 )
@@ -16,6 +17,9 @@ func runFindCommand(args []string) {
 	fs := flag.NewFlagSet("find", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "hits as JSON (block, range, boxes)")
 	context := fs.Int("context", 40, "context characters shown on each side of a match")
+	var invert bool
+	fs.BoolVar(&invert, "v", false, "select blocks with NO match instead of hits")
+	fs.BoolVar(&invert, "invert", false, "alias of -v")
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s find [options] <query> <archive.html>\n\n", os.Args[0])
@@ -31,7 +35,7 @@ func runFindCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(reorderFlags(args, matchBoolFlags(map[string]bool{"json": true})))
+	_ = fs.Parse(reorderFlags(args, matchBoolFlags(map[string]bool{"json": true, "v": true, "invert": true})))
 	if fs.NArg() != 2 {
 		fs.Usage()
 		os.Exit(2)
@@ -50,6 +54,61 @@ func runFindCommand(args []string) {
 		die(err)
 	}
 	hits := textlayer.FindAll(matcher, layer)
+
+	// -v selects whole blocks with no match — a filter, not a span
+	// search, which is why invert exists only on find: there is nothing
+	// for mark/pdf to highlight in a non-match.
+	if invert {
+		matched := map[int]bool{}
+		for _, h := range hits {
+			matched[h.Block.ID] = true
+		}
+		var blocks []*textlayer.Block
+		for i := range layer.Blocks {
+			if b := &layer.Blocks[i]; !matched[b.ID] {
+				blocks = append(blocks, b)
+			}
+		}
+		if *asJSON {
+			type jsonBlock struct {
+				Block int    `json:"block"`
+				Type  string `json:"type"`
+				Text  string `json:"text"`
+			}
+			out := struct {
+				Query      string      `json:"query"`
+				Normalizer string      `json:"normalizer"`
+				Archive    string      `json:"archive"`
+				URL        string      `json:"url"`
+				Inverted   bool        `json:"inverted"`
+				Blocks     []jsonBlock `json:"blocks"`
+			}{
+				Query:      fs.Arg(0),
+				Normalizer: textlayer.NormVersion,
+				Archive:    fs.Arg(1),
+				URL:        layer.URL,
+				Inverted:   true,
+				Blocks:     []jsonBlock{},
+			}
+			for _, b := range blocks {
+				out.Blocks = append(out.Blocks, jsonBlock{Block: b.ID, Type: b.Type, Text: b.Text})
+			}
+			enc, err := json.MarshalIndent(out, "", "  ")
+			if err != nil {
+				die(err)
+			}
+			fmt.Println(string(enc))
+		} else {
+			for _, b := range blocks {
+				fmt.Printf("#%d %s  %s\n", b.ID, b.Type, snippet(b.Text, 2**context))
+			}
+			fmt.Fprintf(os.Stderr, "%d block(s) without a match\n", len(blocks))
+		}
+		if len(blocks) == 0 {
+			os.Exit(1)
+		}
+		return
+	}
 
 	if *asJSON {
 		type jsonHit struct {
@@ -108,4 +167,15 @@ func runFindCommand(args []string) {
 	if len(hits) == 0 {
 		os.Exit(1)
 	}
+}
+
+// snippet flattens newlines and truncates s to max runes for one-line
+// block listings (-v output).
+func snippet(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }
