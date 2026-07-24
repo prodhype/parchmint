@@ -37,10 +37,43 @@ type MatchOptions struct {
 	// `(?i)`). Phrase mode is case-insensitive already; this flag only
 	// applies to Regex.
 	IgnoreCase bool
+
+	// Fuzzy accepts page words within this Levenshtein distance of each
+	// query word (0 = off, max 3). Matching is whole-token: each query
+	// word must fuzzy-equal one page word, consecutively — the recall
+	// knob for OCR'd image text, where "Music" comes out "Musi" or
+	// "rn" reads as "m". Words shorter than minFuzzyLen never fuzz (too
+	// many false hits); they must match exactly.
+	Fuzzy int
 }
+
+// maxFuzzy caps the edit-distance budget: beyond 2–3 nearly everything
+// matches something.
+const maxFuzzy = 3
+
+// minFuzzyLen is the query-word length (in runes) below which fuzzy
+// matching degrades to exact equality.
+const minFuzzyLen = 4
 
 // Compile builds the Matcher for a query under the given options.
 func Compile(query string, opts MatchOptions) (Matcher, error) {
+	if opts.Fuzzy != 0 {
+		if opts.Regex {
+			return nil, fmt.Errorf("regex and fuzzy matching are mutually exclusive")
+		}
+		if opts.Fuzzy < 0 || opts.Fuzzy > maxFuzzy {
+			return nil, fmt.Errorf("fuzzy distance must be between 1 and %d, got %d", maxFuzzy, opts.Fuzzy)
+		}
+		toks := Tokenize(query, false)
+		if len(toks) == 0 {
+			return nil, fmt.Errorf("query %q has no searchable tokens", query)
+		}
+		words := make([]string, len(toks))
+		for i, t := range toks {
+			words[i] = t.Norm
+		}
+		return fuzzyMatcher{words: words, dist: opts.Fuzzy}, nil
+	}
 	if opts.Regex {
 		pattern := query
 		if opts.IgnoreCase {
@@ -76,6 +109,82 @@ func (m regexMatcher) FindBlock(b *Block) []Hit {
 		hits = append(hits, Hit{Block: b, Start: conv(loc[0]), End: conv(loc[1])})
 	}
 	return hits
+}
+
+// fuzzyMatcher matches each (normalized) query word against consecutive
+// (normalized) page tokens within a Levenshtein budget. Deliberately
+// token-scoped — never fuzzy across whole blocks — so cost stays linear
+// in tokens and hits stay explainable. Hits cover whole page words:
+// there is no meaningful sub-word range when the word only nearly
+// matched.
+type fuzzyMatcher struct {
+	words []string
+	dist  int
+}
+
+func (m fuzzyMatcher) FindBlock(b *Block) []Hit {
+	toks := Tokenize(b.Text, false)
+	var hits []Hit
+	for i := 0; i+len(m.words) <= len(toks); i++ {
+		ok := true
+		for j, qw := range m.words {
+			if !fuzzyEqual(toks[i+j].Norm, qw, m.dist) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			hits = append(hits, Hit{Block: b, Start: toks[i].Start, End: toks[i+len(m.words)-1].End})
+		}
+	}
+	return hits
+}
+
+// fuzzyEqual reports whether page is within dist edits of query — exact
+// equality when the query word is too short to fuzz safely.
+func fuzzyEqual(page, query string, dist int) bool {
+	q := []rune(query)
+	if len(q) < minFuzzyLen {
+		return page == query
+	}
+	p := []rune(page)
+	return withinLevenshtein(p, q, dist)
+}
+
+// withinLevenshtein reports edit distance ≤ max, with the standard cheap
+// exits: the length difference bounds the distance from below, and a DP
+// row whose minimum already exceeds max can never recover.
+func withinLevenshtein(a, b []rune, max int) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	if len(b)-len(a) > max {
+		return false
+	}
+	prev := make([]int, len(a)+1)
+	cur := make([]int, len(a)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(b); i++ {
+		cur[0] = i
+		rowMin := cur[0]
+		for j := 1; j <= len(a); j++ {
+			cost := 1
+			if a[j-1] == b[i-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			if cur[j] < rowMin {
+				rowMin = cur[j]
+			}
+		}
+		if rowMin > max {
+			return false
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(a)] <= max
 }
 
 // utf16Offset returns a converter from UTF-8 byte offsets in s to UTF-16

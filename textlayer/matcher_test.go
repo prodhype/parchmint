@@ -107,6 +107,54 @@ func TestRegexUTF16Offsets(t *testing.T) {
 	}
 }
 
+func TestFuzzyMatcher(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		dist  int
+		text  string
+		want  []string
+	}{
+		{"ocr truncation", "Music", 1, "Apple Musi on every device", []string{"Musi"}},
+		{"substitution", "quick", 1, "the quack brown fox", []string{"quack"}},
+		{"insertion", "brown", 1, "a browwn dog", []string{"browwn"}},
+		{"deletion", "jumped", 1, "it jmped high", []string{"jmped"}},
+		{"transposition costs two", "field", 2, "the feild below", []string{"feild"}},
+		{"transposition beyond budget", "field", 1, "the feild below", nil},
+		{"beyond budget", "quick", 1, "the qwakc brown fox", nil},
+		{"short words stay exact", "cat", 2, "a cot sat", nil},
+		{"short words match exactly", "cat", 2, "a cat sat", []string{"cat"}},
+		{"multi-word consecutive", "quick brown", 1, "the quack browm fox", []string{"quack browm"}},
+		{"multi-word one too far", "quick brown", 1, "the quack green fox", nil},
+		{"case folds like phrase mode", "music", 1, "MUSI everywhere", []string{"MUSI"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compileStrings(t, tt.query, MatchOptions{Fuzzy: tt.dist}, tt.text)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("hit %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFuzzyValidation(t *testing.T) {
+	if _, err := Compile("word", MatchOptions{Fuzzy: 4}); err == nil {
+		t.Error("expected error for fuzzy distance beyond the cap")
+	}
+	if _, err := Compile("word", MatchOptions{Fuzzy: -1}); err == nil {
+		t.Error("expected error for negative fuzzy distance")
+	}
+	if _, err := Compile("word", MatchOptions{Fuzzy: 1, Regex: true}); err == nil {
+		t.Error("expected error for regex+fuzzy")
+	}
+}
+
 func TestFindAll(t *testing.T) {
 	layer := &Layer{Blocks: []Block{
 		{ID: 0, Text: "the quick brown fox"},
