@@ -25,15 +25,17 @@ func runPdfCommand(args []string) {
 	output := fs.String("o", "", "output file (default <archive>.pdf; '-' for stdout)")
 	color := fs.String("color", "rgba(255, 220, 0, 0.45)", "highlight fill for matched image text")
 	timeout := fs.Int("timeout", 120, "timeout in seconds")
+	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s pdf [-o out.pdf] [phrase ...] <archive.html|.mht>\n\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "Renders an archive to a PDF with a searchable text layer (including")
 		fmt.Fprintln(os.Stderr, "text inside images, if the archive was `parch index`ed). Any phrases")
-		fmt.Fprintln(os.Stderr, "before the archive are highlighted, page text and image text alike.")
+		fmt.Fprintln(os.Stderr, "before the archive are highlighted, page text and image text alike;")
+		fmt.Fprintln(os.Stderr, "matching modes are the same as `parch find` (-e regex, …).")
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(reorderFlags(args, nil))
+	_ = fs.Parse(reorderFlags(args, matchBoolFlags(nil)))
 	if fs.NArg() < 1 {
 		fs.Usage()
 		os.Exit(2)
@@ -60,6 +62,7 @@ func runPdfCommand(args []string) {
 
 	res, err := capture.ExportPDF(ctx, runner.DefaultConfig(), "file://"+abs, phrases, layer, capture.PDFOptions{
 		Color: *color,
+		Match: match.options(),
 	})
 	if err != nil {
 		die(err)

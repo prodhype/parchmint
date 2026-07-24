@@ -16,17 +16,22 @@ func runFindCommand(args []string) {
 	fs := flag.NewFlagSet("find", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "hits as JSON (block, range, boxes)")
 	context := fs.Int("context", 40, "context characters shown on each side of a match")
+	match := registerMatchFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s find [-json] <phrase> <archive.html>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s find [options] <query> <archive.html>\n\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "Ctrl-F-style matching within one paragraph (never across): a query")
 		fmt.Fprintln(os.Stderr, "word matches anywhere inside a page word (\"phone\" finds iPhone),")
 		fmt.Fprintln(os.Stderr, "case/accent/punctuation-insensitively; consecutive words must be")
 		fmt.Fprintln(os.Stderr, "consecutive on the page; `*` bridges words (\"apple*card\" and")
 		fmt.Fprintln(os.Stderr, "\"apple * card\" both find \"Apple Gift Card\").")
+		fmt.Fprintln(os.Stderr, "\nWith -e the query is a Go regular expression instead, matched")
+		fmt.Fprintln(os.Stderr, "against the raw block text (no case/accent/punctuation folding;")
+		fmt.Fprintln(os.Stderr, "-i for case-insensitive). `.` does not match a block's internal")
+		fmt.Fprintln(os.Stderr, "newlines (from <br>) unless the pattern uses (?s).")
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(reorderFlags(args, map[string]bool{"json": true}))
+	_ = fs.Parse(reorderFlags(args, matchBoolFlags(map[string]bool{"json": true})))
 	if fs.NArg() != 2 {
 		fs.Usage()
 		os.Exit(2)
@@ -40,7 +45,7 @@ func runFindCommand(args []string) {
 	if err != nil {
 		die(err)
 	}
-	matcher, err := textlayer.Compile(fs.Arg(0), textlayer.MatchOptions{})
+	matcher, err := textlayer.Compile(fs.Arg(0), match.options())
 	if err != nil {
 		die(err)
 	}
