@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"strings"
 
 	"github.com/goodblaster/parchmint/textlayer"
 )
@@ -16,6 +17,8 @@ type matchFlags struct {
 	wholeWord  bool
 	caseSens   bool
 	fixed      bool
+	inTypes    string
+	source     string
 }
 
 // registerMatchFlags adds the shared matching flags to fs.
@@ -32,19 +35,26 @@ func registerMatchFlags(fs *flag.FlagSet) *matchFlags {
 	fs.BoolVar(&m.caseSens, "case-sensitive", false, "alias of -s")
 	fs.BoolVar(&m.fixed, "F", false, "literal substring of the raw text: no punctuation folding, no `*` wildcard")
 	fs.BoolVar(&m.fixed, "fixed", false, "alias of -F")
+	fs.StringVar(&m.inTypes, "in", "", "only match in blocks of these types, comma-separated (p,h1..h6,li,td,th,caption,pre,blockquote,img,other)")
+	fs.StringVar(&m.source, "source", "", "only match text from this source: ocr (inside images, needs `parch index`) or dom (page text)")
 	return m
 }
 
 // options assembles the MatchOptions after fs.Parse has run.
 func (m *matchFlags) options() textlayer.MatchOptions {
-	return textlayer.MatchOptions{
+	opts := textlayer.MatchOptions{
 		Regex:      m.regex,
 		IgnoreCase: m.ignoreCase,
 		Fuzzy:      m.fuzzy,
 		WholeWord:  m.wholeWord,
 		CaseSens:   m.caseSens,
 		Fixed:      m.fixed,
+		Source:     m.source,
 	}
+	if m.inTypes != "" {
+		opts.InTypes = strings.Split(m.inTypes, ",")
+	}
+	return opts
 }
 
 // matchBoolFlags returns the value-less matching flag names merged with

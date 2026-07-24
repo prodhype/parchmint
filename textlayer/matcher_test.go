@@ -218,6 +218,58 @@ func TestModifierCombos(t *testing.T) {
 	}
 }
 
+func TestScopedMatcher(t *testing.T) {
+	layer := &Layer{Blocks: []Block{
+		{ID: 0, Type: "h1", Text: "revenue report"},
+		{ID: 1, Type: "p", Text: "revenue rose"},
+		{ID: 2, Type: "td", Text: "revenue: 12M"},
+		{ID: 3, Type: "img", Source: "ocr", Text: "revenue chart"},
+	}}
+	find := func(opts MatchOptions) []int {
+		t.Helper()
+		m, err := Compile("revenue", opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []int
+		for _, h := range FindAll(m, layer) {
+			ids = append(ids, h.Block.ID)
+		}
+		return ids
+	}
+	eq := func(got, want []int) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	if got := find(MatchOptions{}); !eq(got, []int{0, 1, 2, 3}) {
+		t.Errorf("unscoped: got %v", got)
+	}
+	if got := find(MatchOptions{InTypes: []string{"td", "th"}}); !eq(got, []int{2}) {
+		t.Errorf("in td,th: got %v", got)
+	}
+	if got := find(MatchOptions{Source: "ocr"}); !eq(got, []int{3}) {
+		t.Errorf("source ocr: got %v", got)
+	}
+	if got := find(MatchOptions{Source: "dom"}); !eq(got, []int{0, 1, 2}) {
+		t.Errorf("source dom: got %v", got)
+	}
+	// Scoping composes with any core, e.g. regex.
+	if got := find(MatchOptions{Regex: true, InTypes: []string{"h1"}}); !eq(got, []int{0}) {
+		t.Errorf("regex in h1: got %v", got)
+	}
+	if _, err := Compile("x", MatchOptions{Source: "image"}); err == nil {
+		t.Error("expected error for unknown source")
+	}
+}
+
 func TestFindAll(t *testing.T) {
 	layer := &Layer{Blocks: []Block{
 		{ID: 0, Text: "the quick brown fox"},

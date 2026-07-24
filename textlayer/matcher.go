@@ -3,6 +3,7 @@ package textlayer
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -63,6 +64,16 @@ type MatchOptions struct {
 	// block text: no tokenization, no punctuation-insensitivity, no `*`
 	// wildcard. Case-insensitive like the default unless CaseSens.
 	Fixed bool
+
+	// InTypes limits matching to blocks of these types (p, h1…h6, li,
+	// td, th, caption, pre, blockquote, img, other). Empty = every type.
+	// Composes with any mode: "highlight revenue, but only in table
+	// cells" is InTypes: td,th.
+	InTypes []string
+
+	// Source limits matching to "ocr" blocks (text `parch index` read
+	// out of images) or "dom" blocks (page text). Empty = both.
+	Source string
 }
 
 // maxFuzzy caps the edit-distance budget: beyond 2–3 nearly everything
@@ -73,14 +84,18 @@ const maxFuzzy = 3
 // matching degrades to exact equality.
 const minFuzzyLen = 4
 
-// Compile builds the Matcher for a query under the given options.
+// Compile builds the Matcher for a query under the given options: a
+// mode core (phrase by default; Fixed/Fuzzy/Regex swap it), wrapped in
+// a scope filter when InTypes/Source are set.
 func Compile(query string, opts MatchOptions) (Matcher, error) {
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
+
+	var core Matcher
 	switch {
 	case opts.Fixed:
-		return fixedMatcher{needle: []rune(query), caseSens: opts.CaseSens, wholeWord: opts.WholeWord}, nil
+		core = fixedMatcher{needle: []rune(query), caseSens: opts.CaseSens, wholeWord: opts.WholeWord}
 	case opts.Fuzzy != 0:
 		toks := tokenize(query, false, opts.CaseSens)
 		if len(toks) == 0 {
@@ -90,7 +105,7 @@ func Compile(query string, opts MatchOptions) (Matcher, error) {
 		for i, t := range toks {
 			words[i] = t.Norm
 		}
-		return fuzzyMatcher{words: words, dist: opts.Fuzzy, caseSens: opts.CaseSens}, nil
+		core = fuzzyMatcher{words: words, dist: opts.Fuzzy, caseSens: opts.CaseSens}
 	case opts.Regex:
 		pattern := query
 		if opts.IgnoreCase {
@@ -100,10 +115,54 @@ func Compile(query string, opts MatchOptions) (Matcher, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bad regex %q: %w", query, err)
 		}
-		return regexMatcher{re: re}, nil
+		core = regexMatcher{re: re}
 	default:
-		return parsePhrase(query, opts.WholeWord, opts.CaseSens)
+		q, err := parsePhrase(query, opts.WholeWord, opts.CaseSens)
+		if err != nil {
+			return nil, err
+		}
+		core = q
 	}
+
+	if len(opts.InTypes) > 0 || opts.Source != "" {
+		s := scopedMatcher{core: core, source: opts.Source}
+		if len(opts.InTypes) > 0 {
+			s.types = make(map[string]bool, len(opts.InTypes))
+			for _, t := range opts.InTypes {
+				s.types[strings.TrimSpace(t)] = true
+			}
+		}
+		return s, nil
+	}
+	return core, nil
+}
+
+// scopedMatcher delegates to core only for blocks that pass the type
+// and source predicates — structural scoping that composes with any
+// mode ("find only inside images" = Source ocr).
+type scopedMatcher struct {
+	core   Matcher
+	types  map[string]bool // nil = every type
+	source string          // "ocr", "dom", or "" for both
+}
+
+func (m scopedMatcher) FindBlock(b *Block) []Hit {
+	if m.types != nil && !m.types[b.Type] {
+		return nil
+	}
+	switch m.source {
+	case "ocr":
+		if b.Source != "ocr" {
+			return nil
+		}
+	case "dom":
+		// The extractor leaves Source empty for page text; anything
+		// that isn't OCR is DOM.
+		if b.Source == "ocr" {
+			return nil
+		}
+	}
+	return m.core.FindBlock(b)
 }
 
 // validate rejects option combinations that would silently mean
@@ -126,6 +185,11 @@ func (opts MatchOptions) validate() error {
 	}
 	if opts.Fuzzy != 0 && (opts.Fuzzy < 0 || opts.Fuzzy > maxFuzzy) {
 		return fmt.Errorf("fuzzy distance must be between 1 and %d, got %d", maxFuzzy, opts.Fuzzy)
+	}
+	switch opts.Source {
+	case "", "ocr", "dom":
+	default:
+		return fmt.Errorf("source must be ocr or dom, got %q", opts.Source)
 	}
 	return nil
 }
