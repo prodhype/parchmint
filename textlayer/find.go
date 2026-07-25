@@ -23,6 +23,10 @@ import (
 type Query struct {
 	Raw      string
 	patterns [][]elem // alternative readings (internal-star tokens have two)
+
+	// Modifiers (MatchOptions; zero values = the loose default).
+	wholeWord bool // fragments must equal whole tokens, not substrings
+	caseSens  bool // tokens keep their case on both sides
 }
 
 // maxGap bounds how many words a `*` may bridge, so a stray star can't
@@ -37,9 +41,13 @@ type elem struct {
 	re  *regexp.Regexp
 }
 
-func (e elem) matches(norm string) bool {
+func (e elem) matches(norm string, whole bool) bool {
 	if e.re != nil {
+		// Compiled anchored when the query is whole-word (parsePhrase).
 		return e.re.MatchString(norm)
+	}
+	if whole {
+		return norm == e.sub
 	}
 	return strings.Contains(norm, e.sub)
 }
@@ -63,7 +71,15 @@ func (e elem) byteRange(norm string) (int, int) {
 // ParseQuery normalizes and tokenizes a query with the same folding the
 // block side uses, so both sides agree by construction.
 func ParseQuery(raw string) (*Query, error) {
-	toks := Tokenize(raw, true)
+	return parsePhrase(raw, false, false)
+}
+
+// parsePhrase is ParseQuery with the -w/-s modifiers: wholeWord gates
+// every fragment on full-token equality instead of substring containment
+// ("phone" no longer hits "iPhone"), caseSens keeps case on both the
+// query and block side of the fold.
+func parsePhrase(raw string, wholeWord, caseSens bool) (*Query, error) {
+	toks := tokenize(raw, true, caseSens)
 	if len(toks) == 0 {
 		return nil, fmt.Errorf("query %q has no searchable tokens", raw)
 	}
@@ -86,7 +102,12 @@ func ParseQuery(raw string) (*Query, error) {
 			for i, p := range parts {
 				quoted[i] = regexp.QuoteMeta(p)
 			}
-			re, err := regexp.Compile(strings.Join(quoted, ".*"))
+			pattern := strings.Join(quoted, ".*")
+			if wholeWord {
+				// Whole-word: the fragments must span the entire token.
+				pattern = "^(?:" + pattern + ")$"
+			}
+			re, err := regexp.Compile(pattern)
 			if err != nil {
 				return nil, fmt.Errorf("bad wildcard token %q: %w", t.Norm, err)
 			}
@@ -119,7 +140,7 @@ func ParseQuery(raw string) (*Query, error) {
 		patterns = next
 	}
 
-	q := &Query{Raw: raw}
+	q := &Query{Raw: raw, wholeWord: wholeWord, caseSens: caseSens}
 	for _, pat := range patterns {
 		// Gaps at the edges are meaningless; adjacent gaps collapse.
 		trimmed := make([]elem, 0, len(pat))
@@ -146,23 +167,23 @@ func ParseQuery(raw string) (*Query, error) {
 // returning the index one past the last consumed token. Gaps backtrack up
 // to maxGap; patterns start and end with fragments (guaranteed by
 // ParseQuery), so a hit's edges are always real matched words.
-func matchPattern(toks []Token, i int, pat []elem) (int, bool) {
+func matchPattern(toks []Token, i int, pat []elem, whole bool) (int, bool) {
 	if len(pat) == 0 {
 		return i, true
 	}
 	e := pat[0]
 	if e.gap {
 		for skip := 0; skip <= maxGap && i+skip < len(toks); skip++ {
-			if end, ok := matchPattern(toks, i+skip, pat[1:]); ok {
+			if end, ok := matchPattern(toks, i+skip, pat[1:], whole); ok {
 				return end, true
 			}
 		}
 		return 0, false
 	}
-	if i >= len(toks) || !e.matches(toks[i].Norm) {
+	if i >= len(toks) || !e.matches(toks[i].Norm, whole) {
 		return 0, false
 	}
-	return matchPattern(toks, i+1, pat[1:])
+	return matchPattern(toks, i+1, pat[1:], whole)
 }
 
 // Hit is one phrase match inside one block.
@@ -239,11 +260,11 @@ func (h Hit) Context(around int, open, close string) string {
 // within their words ("phone" in "iPhone" starts after the "i"); interior
 // words are covered whole.
 func (q *Query) FindBlock(b *Block) []Hit {
-	toks := Tokenize(b.Text, false)
+	toks := tokenize(b.Text, false, q.caseSens)
 	var hits []Hit
 	for i := 0; i < len(toks); i++ {
 		for _, pat := range q.patterns {
-			end, ok := matchPattern(toks, i, pat)
+			end, ok := matchPattern(toks, i, pat, q.wholeWord)
 			if !ok || end <= i {
 				continue
 			}
@@ -262,11 +283,66 @@ func (q *Query) FindBlock(b *Block) []Hit {
 
 // Find returns every match across the layer, in block order.
 func (q *Query) Find(layer *Layer) []Hit {
-	var hits []Hit
-	for i := range layer.Blocks {
-		hits = append(hits, q.FindBlock(&layer.Blocks[i])...)
+	return FindAll(q, layer)
+}
+
+// TermRange is one disjoint highlight range tagged with the index of the
+// query term that owns it — what a multi-color highlighter consumes.
+type TermRange struct {
+	Start, End int // UTF-16 range in the block's text
+	Term       int // index into the term list that produced the hits
+}
+
+// MergeTermRanges flattens per-term hits into per-block DISJOINT ranges,
+// resolving overlaps by "last term wins" (the deterministic rule for
+// different-color highlights). Disjointness is load-bearing for the DOM
+// marker: apply_text_marks.js wraps all ranges in one back-to-front pass
+// against the cached extraction, and overlapping wraps would split text
+// nodes out from under later ranges' offsets.
+func MergeTermRanges(hitsByTerm [][]Hit) map[int][]TermRange {
+	type span struct{ start, end, term int }
+	byBlock := map[int][]span{}
+	for term, hits := range hitsByTerm {
+		for _, h := range hits {
+			if h.End > h.Start {
+				byBlock[h.Block.ID] = append(byBlock[h.Block.ID], span{h.Start, h.End, term})
+			}
+		}
 	}
-	return hits
+
+	out := map[int][]TermRange{}
+	for id, spans := range byBlock {
+		// Boundary sweep: within each elementary interval the covering
+		// set is constant, so the winner is just the highest term index.
+		bounds := make([]int, 0, len(spans)*2)
+		for _, s := range spans {
+			bounds = append(bounds, s.start, s.end)
+		}
+		sort.Ints(bounds)
+		var ranges []TermRange
+		for i := 0; i+1 < len(bounds); i++ {
+			a, b := bounds[i], bounds[i+1]
+			if a == b {
+				continue
+			}
+			top := -1
+			for _, s := range spans {
+				if s.start <= a && s.end >= b && s.term > top {
+					top = s.term
+				}
+			}
+			if top < 0 {
+				continue
+			}
+			if n := len(ranges); n > 0 && ranges[n-1].End == a && ranges[n-1].Term == top {
+				ranges[n-1].End = b // adjacent, same term: one range
+			} else {
+				ranges = append(ranges, TermRange{Start: a, End: b, Term: top})
+			}
+		}
+		out[id] = ranges
+	}
+	return out
 }
 
 // MergeHitRanges groups hits by block id and merges overlapping/adjacent

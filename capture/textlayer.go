@@ -50,9 +50,10 @@ func extractPayload(ctx context.Context, cacheRuns bool) (*textLayerPayload, err
 }
 
 // markEntry mirrors the marks parameter of apply_text_marks.js: the
-// UTF-16 ranges to wrap in a block.
+// UTF-16 ranges to wrap in a block, each tagged with the query term that
+// owns it (for per-term colors).
 type markEntry struct {
-	Ranges [][2]int `json:"ranges"`
+	Ranges [][3]int `json:"ranges"`
 }
 
 // applyHighlights matches the phrases against an extracted payload and
@@ -65,42 +66,55 @@ type markEntry struct {
 // cacheRuns=true. Marks land in the DOM before serialization, so every
 // backend shows them — yellow pixels in screenshots and PDFs, <mark>
 // elements in HTML.
-func applyHighlights(ctx context.Context, payload *textLayerPayload, phrases []string) (int, error) {
+//
+// colors gives phrase i its own highlight color (nil / missing entries =
+// the default <mark> look); style picks the mark presentation (bg,
+// underline, box, bold — empty = bg). Ranges are flattened Go-side to
+// DISJOINT per-block spans with "last term wins" on overlap, because the
+// JS marker must wrap everything in one back-to-front pass against the
+// cached extraction (a second pass would see nodes the first one split).
+func applyHighlights(ctx context.Context, payload *textLayerPayload, phrases []string, match textlayer.MatchOptions, colors []string, style string) (int, error) {
 	var blocks []textlayer.Block
 	if err := json.Unmarshal(payload.Blocks, &blocks); err != nil {
 		return 0, errors.Wrap(err, "parse blocks")
 	}
 
-	var hits []textlayer.Hit
-	for _, phrase := range phrases {
-		q, err := textlayer.ParseQuery(phrase)
+	hitsByTerm := make([][]textlayer.Hit, len(phrases))
+	total := 0
+	for ti, phrase := range phrases {
+		m, err := textlayer.Compile(phrase, match)
 		if err != nil {
 			return 0, err
 		}
 		for i := range blocks {
-			hits = append(hits, q.FindBlock(&blocks[i])...)
+			hitsByTerm[ti] = append(hitsByTerm[ti], m.FindBlock(&blocks[i])...)
 		}
+		total += len(hitsByTerm[ti])
 	}
-	if len(hits) == 0 {
+	if total == 0 {
 		log.With("phrases", len(phrases)).With("matches", 0).Info("highlighting matches")
 		return 0, nil
 	}
 
 	marks := map[int]markEntry{}
-	for id, ranges := range textlayer.MergeHitRanges(hits) {
-		marks[id] = markEntry{Ranges: ranges}
+	for id, ranges := range textlayer.MergeTermRanges(hitsByTerm) {
+		e := markEntry{Ranges: make([][3]int, 0, len(ranges))}
+		for _, r := range ranges {
+			e.Ranges = append(e.Ranges, [3]int{r.Start, r.End, r.Term})
+		}
+		marks[id] = e
 	}
 
 	var st struct {
 		Marked  int `json:"marked"`
 		Skipped int `json:"skipped"`
 	}
-	if err := js.ApplyTextMarks.Action(&st, marks).Do(ctx); err != nil {
+	if err := js.ApplyTextMarks.Action(&st, marks, map[string]any{"colors": colors, "style": style}).Do(ctx); err != nil {
 		return 0, errors.Wrap(err, "apply text marks")
 	}
-	log.With("phrases", len(phrases)).With("matches", len(hits)).
+	log.With("phrases", len(phrases)).With("matches", total).
 		With("marked", st.Marked).With("skipped", st.Skipped).Info("highlighting matches")
-	return len(hits), nil
+	return total, nil
 }
 
 // composeLayer wraps an extraction payload with the archive header,

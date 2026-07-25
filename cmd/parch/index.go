@@ -27,6 +27,7 @@ func runIndexCommand(args []string) {
 	langFlag := fs.String("lang", "", "comma-separated OCR language hints (default: the page's declared language, else en-US)")
 	minSize := fs.Int("min", 32, "skip images displayed smaller than this (px, either dimension)")
 	output := fs.String("o", "", "write result here instead of updating the archive in place")
+	fs.StringVar(output, "output", "", "alias of -o")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s index [-engine apple|tesseract] [-lang en-US] <archive.html>\n\nOptions:\n", os.Args[0])
 		fs.PrintDefaults()

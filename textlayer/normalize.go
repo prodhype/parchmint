@@ -37,10 +37,12 @@ func (t Token) RawRange(a, b int) (int, int) {
 	return t.Map[a][0], t.Map[b-1][1]
 }
 
-// foldRune normalizes one rune: quote/dash unification, invisible-char
+// foldRuneOpt normalizes one rune: quote/dash unification, invisible-char
 // removal, NFKD decomposition with combining marks stripped (café→cafe),
-// lowercasing. Returns the folded runes (possibly none).
-func foldRune(r rune) []rune {
+// lowercasing. Returns the folded runes (possibly none). caseSens skips
+// only the lowercasing — a case-sensitive query (-s) still folds accents,
+// quotes, dashes, and invisible characters.
+func foldRuneOpt(r rune, caseSens bool) []rune {
 	switch r {
 	case '\u00AD', '\u200B', '\u200C', '\u200D', '\uFEFF': // soft hyphen, zero-widths, BOM
 		return nil
@@ -56,7 +58,10 @@ func foldRune(r rune) []rune {
 		if unicode.Is(unicode.Mn, d) {
 			continue
 		}
-		out = append(out, unicode.ToLower(d))
+		if !caseSens {
+			d = unicode.ToLower(d)
+		}
+		out = append(out, d)
 	}
 	return out
 }
@@ -93,6 +98,12 @@ func tokenClass(r rune, keepStar bool) int {
 // function serves blocks and (with keepStar) queries, so both sides fold
 // identically by construction.
 func Tokenize(text string, keepStar bool) []Token {
+	return tokenize(text, keepStar, false)
+}
+
+// tokenize is Tokenize with the case fold optional (caseSens skips only
+// the lowercasing; every other fold still applies).
+func tokenize(text string, keepStar, caseSens bool) []Token {
 	var tokens []Token
 	var cur strings.Builder
 	var curMap [][2]int // one entry per byte of cur: source rune's raw UTF-16 range
@@ -122,7 +133,7 @@ func Tokenize(text string, keepStar bool) []Token {
 		if width < 0 {
 			width = 1
 		}
-		folded := foldRune(r)
+		folded := foldRuneOpt(r, caseSens)
 
 		switch {
 		case len(folded) == 0:

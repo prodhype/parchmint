@@ -23,8 +23,15 @@ go build -o bin/ ./cmd/...
 ./bin/parch -v https://…                         # per-step debug logs from both repos
 ./bin/parch text page.html                       # plain text back out of an archive
 ./bin/parch text -json page.html                 # the raw embedded text layer
+./bin/parch text -blocks page.html               # NDJSON, one paragraph block per line —
+                                                 # the export feed for external indexers
+./bin/parch lines page.html                      # one plain-text line per paragraph block
 ./bin/parch find "some phrase" page.html         # block-scoped phrase search (grep-like exit codes)
 ./bin/parch find -json "wild*card" page.html     # hits with boxes, machine-readable
+./bin/parch find -l -0 phrase *.html | xargs -0 …# multi-file grep over a corpus: -l/-c/-q/-m,
+                                                 # -r DIR recursive, NDJSON -json, «match» colored
+                                                 # on a TTY; also -e regex, -z fuzzy, -w/-s/-F,
+                                                 # --in td,th, --source ocr, `-` stdin, `--`
 ./bin/parch -highlight "phrase" https://…        # pre-highlight at capture (repeatable; ALL backends,
                                                  # including pdf/png — marks are pixels there)
 ./bin/parch index page.html                      # OCR the archive's images into the text layer

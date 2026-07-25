@@ -23,17 +23,29 @@ import (
 func runPdfCommand(args []string) {
 	fs := flag.NewFlagSet("pdf", flag.ExitOnError)
 	output := fs.String("o", "", "output file (default <archive>.pdf; '-' for stdout)")
-	color := fs.String("color", "rgba(255, 220, 0, 0.45)", "highlight fill for matched image text")
+	fs.StringVar(output, "output", "", "alias of -o")
 	timeout := fs.Int("timeout", 120, "timeout in seconds")
+	var termColors stringsFlag
+	fs.Var(&termColors, "c", "highlight color, repeatable: the Nth -c colors the Nth phrase; unpaired phrases keep the default yellow")
+	fs.Var(&termColors, "color", "alias of -c")
+	style := fs.String("style", "", "highlight style: bg (default), underline, box, or bold")
+	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s pdf [-o out.pdf] [phrase ...] <archive.html|.mht>\n\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "'-' as the archive reads it from stdin (output then defaults to stdout).")
 		fmt.Fprintln(os.Stderr, "Renders an archive to a PDF with a searchable text layer (including")
 		fmt.Fprintln(os.Stderr, "text inside images, if the archive was `parch index`ed). Any phrases")
-		fmt.Fprintln(os.Stderr, "before the archive are highlighted, page text and image text alike.")
+		fmt.Fprintln(os.Stderr, "before the archive are highlighted, page text and image text alike;")
+		fmt.Fprintln(os.Stderr, "matching modes are the same as `parch find` (-e regex, …), and -c")
+		fmt.Fprintln(os.Stderr, "gives each phrase its own color.")
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
 	}
-	_ = fs.Parse(reorderFlags(args, nil))
+	_ = fs.Parse(reorderFlags(args, matchBoolFlags(nil)))
+	if err := validStyle(*style); err != nil {
+		fmt.Fprintln(os.Stderr, "parch: "+err.Error())
+		os.Exit(2)
+	}
 	if fs.NArg() < 1 {
 		fs.Usage()
 		os.Exit(2)
@@ -46,12 +58,33 @@ func runPdfCommand(args []string) {
 		os.Exit(2)
 	}
 
-	abs, err := filepath.Abs(path)
+	// Fail fast on a bad query (a typo'd -e regex, a contradictory flag
+	// combo) BEFORE paying for a browser session; the capture layer
+	// compiles again per phrase, but by then compilation is known-good.
+	for _, p := range phrases {
+		if _, err := textlayer.Compile(p, match.options()); err != nil {
+			die(err)
+		}
+	}
+
+	srcData, srcName, err := readArchive(path)
 	if err != nil {
 		die(err)
 	}
-	layer, err := textlayer.FromFile(abs)
+	layer, err := textlayer.FromBytes(srcData, srcName)
 	if err != nil {
+		die(err)
+	}
+
+	// The browser loads the archive over file://; a stdin archive is
+	// spilled to a temp file first (removed after the session ends).
+	var abs, tmp string
+	if path == stdinName {
+		if tmp, err = spillArchive(srcData); err != nil {
+			die(err)
+		}
+		abs = tmp
+	} else if abs, err = filepath.Abs(path); err != nil {
 		die(err)
 	}
 
@@ -59,13 +92,22 @@ func runPdfCommand(args []string) {
 	defer cancel()
 
 	res, err := capture.ExportPDF(ctx, runner.DefaultConfig(), "file://"+abs, phrases, layer, capture.PDFOptions{
-		Color: *color,
+		Color:  "rgba(255, 220, 0, 0.45)", // default overlay fill; -c/--color overrides per phrase
+		Match:  match.options(),
+		Colors: termColors,
+		Style:  *style,
 	})
+	if tmp != "" {
+		os.Remove(tmp) // session is over; the spilled stdin copy is done
+	}
 	if err != nil {
 		die(err)
 	}
 
 	dest := *output
+	if dest == "" && path == stdinName {
+		dest = "-" // stdin in, stdout out: no filename to derive from
+	}
 	switch dest {
 	case "-":
 		if _, err := os.Stdout.Write(res.PDF); err != nil {
