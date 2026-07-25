@@ -25,6 +25,7 @@ go build -o bin/ ./cmd/...
 ./bin/parch text -json page.html                 # the raw embedded text layer
 ./bin/parch text -blocks page.html               # NDJSON, one paragraph block per line —
                                                  # the export feed for external indexers
+./bin/parch lines page.html                      # one plain-text line per paragraph block
 ./bin/parch find "some phrase" page.html         # block-scoped phrase search (grep-like exit codes)
 ./bin/parch find -json "wild*card" page.html     # hits with boxes, machine-readable
 ./bin/parch -highlight "phrase" https://…        # pre-highlight at capture (repeatable; ALL backends,

@@ -51,6 +51,9 @@ func main() {
 		case "text":
 			runTextCommand(os.Args[2:])
 			return
+		case "lines":
+			runLinesCommand(os.Args[2:])
+			return
 		case "find":
 			runFindCommand(os.Args[2:])
 			return
