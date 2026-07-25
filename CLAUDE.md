@@ -62,6 +62,7 @@ Backends read per-capture settings from the `Snapshot` (e.g. `ViewportWidth` for
 - SingleFile capture must pass `blockScripts: true` (this vendored bundle's option name — it has no `removeScripts`). Keeping site JS means age gates re-run when the snapshot is opened.
 - Chrome's WebP encoder hard-fails (empty bytes, no error) above 16383px per dimension; `captureFullImage` clamps height and warns. Zero-byte screenshots are treated as errors, never written.
 - Chrome's print pipeline paints `position:fixed` elements on EVERY page and drops fixed (parallax) backgrounds beyond the first viewport — hence `flattenFixedPositioning` and `normalizeBackgroundAttachment` before PDF/raster capture.
+- **`-profile` is single-writer.** Chrome takes a singleton lock on a user-data-dir, so concurrent parch runs sharing one `-profile` fail to start (`process_singleton_posix`) — measured: 3 parallel captures, 2 died, 1 survived. Parallel batches (`xargs -P`) must either drop `-profile` or give each worker its own copy of it. `-cache` has no such problem (3/3 concurrent runs fine), and without `-profile` every run gets a throwaway profile, so plain parallel capture is safe.
 - Prep-side invariants (dialog layering, WebGL buffer preservation, OOPIF freezing, CSP bypass) live in pscription's CLAUDE.md — read it before touching the capture flow.
 
 ## Verification
