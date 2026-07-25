@@ -25,6 +25,15 @@ type MarkOptions struct {
 	// Match selects how the phrases match (zero value = the default
 	// phrase matcher).
 	Match textlayer.MatchOptions
+	// Colors gives phrase i its own highlight color, DOM marks and baked
+	// image rectangles alike (missing entries fall back to the default /
+	// Color). Where different-color highlights overlap, the LAST phrase
+	// wins — the one deterministic rule.
+	Colors []string
+	// Style picks the mark presentation: bg (default), underline, box,
+	// or bold. Baked image highlights render box as an outline; the
+	// other styles fill (pixels can't underline).
+	Style string
 }
 
 // MarkResult reports what MarkArchive did.
@@ -87,7 +96,7 @@ func MarkArchive(ctx context.Context, cfg runner.Config, fileURL string, phrases
 		if err != nil {
 			return err
 		}
-		n, err := applyHighlights(ctx, payload, phrases, opts.Match)
+		n, err := applyHighlights(ctx, payload, phrases, opts.Match, opts.Colors, opts.Style)
 		if err != nil {
 			return err
 		}
@@ -109,6 +118,8 @@ func MarkArchive(ctx context.Context, cfg runner.Config, fileURL string, phrases
 				"grayscale": opts.Grayscale,
 				"color":     opts.Color,
 				"stroke":    opts.Stroke,
+				"colors":    opts.Colors,
+				"style":     opts.Style,
 			}).Do(ctx); err != nil {
 				return errors.Wrap(err, "bake image marks")
 			}
@@ -179,11 +190,13 @@ const inlineLinkedStylesheets = `(() => {
 // ocrMarkSpecs matches phrases against the layer's OCR blocks and returns
 // bake specs: image hash → highlight rects as fractions of the image box
 // (block.Box IS the source image's recorded box, so fractions transfer to
-// natural resolution unchanged).
-func ocrMarkSpecs(layer *textlayer.Layer, phrases []string, match textlayer.MatchOptions) (map[string][][4]float64, int, error) {
-	specs := map[string][][4]float64{}
+// natural resolution unchanged). Each rect's fifth element is the phrase
+// index, for per-term colors; rects paint in phrase order, so overlaps
+// resolve to "last term wins" like the DOM marks.
+func ocrMarkSpecs(layer *textlayer.Layer, phrases []string, match textlayer.MatchOptions) (map[string][][5]float64, int, error) {
+	specs := map[string][][5]float64{}
 	matches := 0
-	for _, phrase := range phrases {
+	for term, phrase := range phrases {
 		q, err := textlayer.Compile(phrase, match)
 		if err != nil {
 			return nil, 0, err
@@ -196,11 +209,12 @@ func ocrMarkSpecs(layer *textlayer.Layer, phrases []string, match textlayer.Matc
 			for _, hit := range q.FindBlock(b) {
 				matches++
 				for _, r := range mergeLineRects(hit.Words()) {
-					specs[b.Image] = append(specs[b.Image], [4]float64{
+					specs[b.Image] = append(specs[b.Image], [5]float64{
 						float64(r[0]-b.Box[0]) / float64(b.Box[2]),
 						float64(r[1]-b.Box[1]) / float64(b.Box[3]),
 						float64(r[2]) / float64(b.Box[2]),
 						float64(r[3]) / float64(b.Box[3]),
+						float64(term),
 					})
 				}
 			}

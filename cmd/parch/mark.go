@@ -25,17 +25,25 @@ func runMarkCommand(args []string) {
 	grayscale := fs.Bool("grayscale", false, "mute images containing hits so the highlight pops")
 	color := fs.String("color", "rgba(255, 220, 0, 0.5)", "highlight fill for image hits")
 	timeout := fs.Int("timeout", 60, "timeout in seconds")
+	var termColors stringsFlag
+	fs.Var(&termColors, "c", "highlight color for the Nth phrase (repeatable, pairs with phrases in order; unpaired phrases keep the default)")
+	style := fs.String("style", "", "highlight style: bg (default), underline, box, or bold")
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s mark [-grayscale] [-o out.html] <phrase> [phrase ...] <archive.html>\n\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "Every argument before the archive is a phrase; all are highlighted")
-		fmt.Fprintln(os.Stderr, "(overlaps merge). Same matching as `parch find`, including its mode")
-		fmt.Fprintln(os.Stderr, "flags (-e regex, …). Run `parch index` first if you want matches")
-		fmt.Fprintln(os.Stderr, "inside images.")
+		fmt.Fprintln(os.Stderr, "(overlaps merge; with -c colors, the last phrase wins). Same matching")
+		fmt.Fprintln(os.Stderr, "as `parch find`, including its mode flags (-e regex, …). Run")
+		fmt.Fprintln(os.Stderr, "`parch index` first if you want matches inside images.")
+		fmt.Fprintln(os.Stderr, "\nExample: parch mark -c yellow -c cyan revenue profit report.html")
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(reorderFlags(args, matchBoolFlags(map[string]bool{"grayscale": true})))
+	if err := validStyle(*style); err != nil {
+		fmt.Fprintln(os.Stderr, "parch: "+err.Error())
+		os.Exit(2)
+	}
 	if fs.NArg() < 2 {
 		fs.Usage()
 		os.Exit(2)
@@ -70,6 +78,8 @@ func runMarkCommand(args []string) {
 		Color:     *color,
 		Stroke:    "rgba(200, 160, 0, 0.9)",
 		Match:     match.options(),
+		Colors:    termColors,
+		Style:     *style,
 	})
 	if err != nil {
 		die(err)

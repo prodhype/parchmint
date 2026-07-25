@@ -25,17 +25,25 @@ func runPdfCommand(args []string) {
 	output := fs.String("o", "", "output file (default <archive>.pdf; '-' for stdout)")
 	color := fs.String("color", "rgba(255, 220, 0, 0.45)", "highlight fill for matched image text")
 	timeout := fs.Int("timeout", 120, "timeout in seconds")
+	var termColors stringsFlag
+	fs.Var(&termColors, "c", "highlight color for the Nth phrase (repeatable, pairs with phrases in order; unpaired phrases keep the default)")
+	style := fs.String("style", "", "highlight style: bg (default), underline, box, or bold")
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s pdf [-o out.pdf] [phrase ...] <archive.html|.mht>\n\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "Renders an archive to a PDF with a searchable text layer (including")
 		fmt.Fprintln(os.Stderr, "text inside images, if the archive was `parch index`ed). Any phrases")
 		fmt.Fprintln(os.Stderr, "before the archive are highlighted, page text and image text alike;")
-		fmt.Fprintln(os.Stderr, "matching modes are the same as `parch find` (-e regex, …).")
+		fmt.Fprintln(os.Stderr, "matching modes are the same as `parch find` (-e regex, …), and -c")
+		fmt.Fprintln(os.Stderr, "gives each phrase its own color.")
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(reorderFlags(args, matchBoolFlags(nil)))
+	if err := validStyle(*style); err != nil {
+		fmt.Fprintln(os.Stderr, "parch: "+err.Error())
+		os.Exit(2)
+	}
 	if fs.NArg() < 1 {
 		fs.Usage()
 		os.Exit(2)
@@ -61,8 +69,10 @@ func runPdfCommand(args []string) {
 	defer cancel()
 
 	res, err := capture.ExportPDF(ctx, runner.DefaultConfig(), "file://"+abs, phrases, layer, capture.PDFOptions{
-		Color: *color,
-		Match: match.options(),
+		Color:  *color,
+		Match:  match.options(),
+		Colors: termColors,
+		Style:  *style,
 	})
 	if err != nil {
 		die(err)

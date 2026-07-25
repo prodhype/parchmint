@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"strings"
 
 	"github.com/goodblaster/parchmint/textlayer"
@@ -55,6 +56,15 @@ func (m *matchFlags) options() textlayer.MatchOptions {
 		opts.InTypes = strings.Split(m.inTypes, ",")
 	}
 	return opts
+}
+
+// validStyle vets the shared -style value for mark/pdf.
+func validStyle(s string) error {
+	switch s {
+	case "", "bg", "underline", "box", "bold":
+		return nil
+	}
+	return fmt.Errorf("unknown style %q (want bg, underline, box, or bold)", s)
 }
 
 // matchBoolFlags returns the value-less matching flag names merged with

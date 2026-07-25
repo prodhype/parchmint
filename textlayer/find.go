@@ -286,6 +286,65 @@ func (q *Query) Find(layer *Layer) []Hit {
 	return FindAll(q, layer)
 }
 
+// TermRange is one disjoint highlight range tagged with the index of the
+// query term that owns it — what a multi-color highlighter consumes.
+type TermRange struct {
+	Start, End int // UTF-16 range in the block's text
+	Term       int // index into the term list that produced the hits
+}
+
+// MergeTermRanges flattens per-term hits into per-block DISJOINT ranges,
+// resolving overlaps by "last term wins" (the deterministic rule for
+// different-color highlights). Disjointness is load-bearing for the DOM
+// marker: apply_text_marks.js wraps all ranges in one back-to-front pass
+// against the cached extraction, and overlapping wraps would split text
+// nodes out from under later ranges' offsets.
+func MergeTermRanges(hitsByTerm [][]Hit) map[int][]TermRange {
+	type span struct{ start, end, term int }
+	byBlock := map[int][]span{}
+	for term, hits := range hitsByTerm {
+		for _, h := range hits {
+			if h.End > h.Start {
+				byBlock[h.Block.ID] = append(byBlock[h.Block.ID], span{h.Start, h.End, term})
+			}
+		}
+	}
+
+	out := map[int][]TermRange{}
+	for id, spans := range byBlock {
+		// Boundary sweep: within each elementary interval the covering
+		// set is constant, so the winner is just the highest term index.
+		bounds := make([]int, 0, len(spans)*2)
+		for _, s := range spans {
+			bounds = append(bounds, s.start, s.end)
+		}
+		sort.Ints(bounds)
+		var ranges []TermRange
+		for i := 0; i+1 < len(bounds); i++ {
+			a, b := bounds[i], bounds[i+1]
+			if a == b {
+				continue
+			}
+			top := -1
+			for _, s := range spans {
+				if s.start <= a && s.end >= b && s.term > top {
+					top = s.term
+				}
+			}
+			if top < 0 {
+				continue
+			}
+			if n := len(ranges); n > 0 && ranges[n-1].End == a && ranges[n-1].Term == top {
+				ranges[n-1].End = b // adjacent, same term: one range
+			} else {
+				ranges = append(ranges, TermRange{Start: a, End: b, Term: top})
+			}
+		}
+		out[id] = ranges
+	}
+	return out
+}
+
 // MergeHitRanges groups hits by block id and merges overlapping/adjacent
 // ranges — what a highlighter needs: overlapping matches (e.g. "a a" in
 // "a a a", or several queries) must not produce nested wraps.

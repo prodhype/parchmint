@@ -148,7 +148,7 @@ func captureOnce(ctx context.Context, url string, cfg runner.Config, recipe pipe
 				return nil
 			}
 			if len(opts.Highlight) > 0 {
-				if _, err := applyHighlights(ctx, payload, opts.Highlight, opts.Match); err != nil {
+				if _, err := applyHighlights(ctx, payload, opts.Highlight, opts.Match, nil, ""); err != nil {
 					log.WithError(err).Warn("highlighting failed; archiving without marks")
 				}
 			}

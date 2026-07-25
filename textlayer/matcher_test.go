@@ -270,6 +270,48 @@ func TestScopedMatcher(t *testing.T) {
 	}
 }
 
+func TestMergeTermRanges(t *testing.T) {
+	b := &Block{ID: 3}
+	hitsByTerm := [][]Hit{
+		{{Block: b, Start: 0, End: 10}, {Block: b, Start: 30, End: 35}}, // term 0
+		{{Block: b, Start: 5, End: 15}},                                 // term 1 overlaps term 0
+		{{Block: b, Start: 8, End: 12}},                                 // term 2 overlaps both
+	}
+	got := MergeTermRanges(hitsByTerm)[3]
+	want := []TermRange{
+		{Start: 0, End: 5, Term: 0},   // term 0 up to where term 1 starts
+		{Start: 5, End: 8, Term: 1},   // term 1 until term 2 starts
+		{Start: 8, End: 12, Term: 2},  // term 2 wins the middle (last term)
+		{Start: 12, End: 15, Term: 1}, // term 1 resumes
+		{Start: 30, End: 35, Term: 0}, // disjoint term 0 range untouched
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("range %d: got %v, want %v", i, got[i], want[i])
+		}
+	}
+	// Ranges must be disjoint and sorted — the DOM marker depends on it.
+	for i := 1; i < len(got); i++ {
+		if got[i].Start < got[i-1].End {
+			t.Errorf("ranges overlap: %v then %v", got[i-1], got[i])
+		}
+	}
+}
+
+func TestMergeTermRangesAdjacentSameTerm(t *testing.T) {
+	b := &Block{ID: 1}
+	got := MergeTermRanges([][]Hit{{
+		{Block: b, Start: 0, End: 5},
+		{Block: b, Start: 5, End: 9},
+	}})[1]
+	if len(got) != 1 || got[0] != (TermRange{Start: 0, End: 9, Term: 0}) {
+		t.Errorf("adjacent same-term ranges should merge: got %v", got)
+	}
+}
+
 func TestFindAll(t *testing.T) {
 	layer := &Layer{Blocks: []Block{
 		{ID: 0, Text: "the quick brown fox"},
