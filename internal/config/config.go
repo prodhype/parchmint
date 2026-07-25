@@ -13,6 +13,7 @@
 //	format = "html"
 //	width  = 1600
 //	links  = "keep"
+//	favicon = true
 package config
 
 import (
@@ -44,6 +45,7 @@ type Defaults struct {
 	Links   string `toml:"links"`
 	Timeout int    `toml:"timeout"`
 	Profile string `toml:"profile"`
+	Favicon *bool  `toml:"favicon"`
 }
 
 // ConfigDirName is the directory that holds a project-local or global config.

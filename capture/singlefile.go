@@ -92,6 +92,7 @@ func (SingleFile) Action(snap *Snapshot) chromedp.ActionFunc {
 
 		snap.MIME = "text/html"
 		snap.Bytes = []byte(pageData.Content)
+		snap.Bytes = embedFaviconsInHTML(snap.Bytes, snap.favicons)
 		if snap.TextLayer != nil {
 			snap.Bytes = spliceTextLayer(snap.Bytes, snap.TextLayer)
 		}

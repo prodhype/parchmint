@@ -87,6 +87,7 @@ func main() {
 		timeout int
 		width   int
 		text    bool
+		favicon bool
 		verbose bool
 	)
 
@@ -118,6 +119,7 @@ func main() {
 	var highlight stringsFlag
 	flag.IntVar(&width, "width", 0, "viewport/layout width in px (0 = default 1600)")
 	flag.BoolVar(&text, "text", true, "embed the text layer in HTML archives (read back with 'parch text <file>')")
+	flag.BoolVar(&favicon, "favicon", true, "embed the page favicon in HTML/MHT archives")
 	flag.Var(&highlight, "highlight", "wrap matches of this phrase in <mark> before capture (repeatable; same matching as 'parch find')")
 	flag.BoolVar(&verbose, "v", false, "debug logging")
 	flag.BoolVar(&verbose, "verbose", false, "alias of -v")
@@ -158,6 +160,7 @@ func main() {
 	cache = pickStr(set, "cache", cache, cfg.CacheDir, "")
 	timeout = pickInt(set, "timeout", timeout, cfg.Defaults.Timeout, defTimeout)
 	width = pickInt(set, "width", width, cfg.Defaults.Width, 0)
+	favicon = pickBool(set, "favicon", favicon, cfg.Defaults.Favicon, true)
 
 	backend := backendFor(format)
 	if backend == nil {
@@ -226,6 +229,7 @@ func main() {
 
 	opts := capture.Options{
 		TextLayer: text && (format == "html" || format == "mht"),
+		Favicon:   favicon && (format == "html" || format == "mht"),
 		Highlight: highlight,
 	}
 	snap, err := capture.CaptureWithOptions(ctx, url, runCfg, recipe, backend, opts)
@@ -371,6 +375,16 @@ func pickInt(set map[string]bool, name string, flagVal, cfgVal, def int) int {
 	}
 	if cfgVal != 0 {
 		return cfgVal
+	}
+	return def
+}
+
+func pickBool(set map[string]bool, name string, flagVal bool, cfgVal *bool, def bool) bool {
+	if set[name] {
+		return flagVal
+	}
+	if cfgVal != nil {
+		return *cfgVal
 	}
 	return def
 }

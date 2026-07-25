@@ -63,3 +63,28 @@ func TestValidStyle(t *testing.T) {
 		t.Error("validStyle(blink): expected error")
 	}
 }
+
+func TestPickBool(t *testing.T) {
+	cfgFalse := false
+	cfgTrue := true
+	tests := []struct {
+		name    string
+		set     map[string]bool
+		flagVal bool
+		cfgVal  *bool
+		def     bool
+		want    bool
+	}{
+		{"default when unset", nil, false, nil, true, true},
+		{"config false overrides default", nil, true, &cfgFalse, true, false},
+		{"config true overrides default", nil, false, &cfgTrue, false, true},
+		{"flag overrides config", map[string]bool{"favicon": true}, true, &cfgFalse, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pickBool(tt.set, "favicon", tt.flagVal, tt.cfgVal, tt.def); got != tt.want {
+				t.Fatalf("pickBool() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

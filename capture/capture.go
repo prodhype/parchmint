@@ -39,6 +39,8 @@ type Snapshot struct {
 	// the prepared page when Options.TextLayer is set; the SingleFile
 	// backend embeds it. Nil when extraction was off or failed.
 	TextLayer []byte
+
+	favicons []faviconEmbed
 }
 
 // Options control capture extras beyond the recipe and backend.
@@ -46,6 +48,10 @@ type Options struct {
 	// TextLayer extracts the text layer (TEXTLAYER.md) from the prepared
 	// page into Snapshot.TextLayer, for backends that can embed it.
 	TextLayer bool
+
+	// Favicon inlines the page's favicon link(s) into the prepared DOM before
+	// serialization, for archive backends that preserve HTML head metadata.
+	Favicon bool
 
 	// Highlight wraps every match of these phrases in
 	// <mark data-parchmint> before serialization — same matcher as
@@ -131,6 +137,21 @@ func captureOnce(ctx context.Context, url string, cfg runner.Config, recipe pipe
 		if defect {
 			return nil, true, nil
 		}
+	}
+
+	if opts.Favicon {
+		_ = session.Run(func(ctx context.Context) error {
+			embeds, n, err := captureFavicon(ctx)
+			snap.favicons = embeds
+			if err != nil {
+				log.WithError(err).Warn("favicon capture had an issue; will embed fetched icons if available")
+				return nil
+			}
+			if n > 0 {
+				log.With("icons", n).Debug("captured favicon")
+			}
+			return nil
+		})
 	}
 
 	// Text layer and capture-time highlighting, on the prepared page

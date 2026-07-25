@@ -40,6 +40,17 @@ func (MHT) Action(snap *Snapshot) chromedp.ActionFunc {
 		snap.MIME = "multipart/related"
 		snap.Bytes = []byte(content)
 
+		if len(snap.favicons) > 0 {
+			doc, err := textlayer.MHTDocument(snap.Bytes)
+			if err != nil {
+				log.WithError(err).Warn("could not read mht document for favicon embedding")
+			} else if embedded, err := textlayer.ReplaceMHTDocument(snap.Bytes, embedFaviconsInHTML(doc, snap.favicons)); err != nil {
+				log.WithError(err).Warn("could not embed favicon in mht")
+			} else {
+				snap.Bytes = embedded
+			}
+		}
+
 		// The text layer rides as an extra MIME part (base64, ignored by
 		// renderers) — same capabilities as the HTML backend's <script>
 		// element: parch text/find/index/mark all work on .mht.
