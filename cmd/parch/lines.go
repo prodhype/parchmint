@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/goodblaster/parchmint/textlayer"
 )
 
 // runLinesCommand implements `parch lines <archive>`: one line of plain
@@ -19,7 +17,7 @@ import (
 func runLinesCommand(args []string) {
 	fs := flag.NewFlagSet("lines", flag.ExitOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s lines <archive.html|.mht|.pdf>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s lines <archive.html|.mht|.pdf> ('-' = stdin)\n\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "Prints one line per paragraph block of the embedded text layer —")
 		fmt.Fprintln(os.Stderr, "plain text only. For block ids and provenance use `text -blocks`.")
 	}
@@ -29,7 +27,7 @@ func runLinesCommand(args []string) {
 		os.Exit(2)
 	}
 
-	layer, err := textlayer.FromFile(fs.Arg(0))
+	layer, err := loadLayer(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "parch: "+err.Error())
 		os.Exit(1)

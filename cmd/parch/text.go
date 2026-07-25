@@ -21,7 +21,7 @@ func runTextCommand(args []string) {
 	asJSON := fs.Bool("json", false, "print the raw text layer as indented JSON")
 	asBlocks := fs.Bool("blocks", false, "one JSON object per block, newline-delimited — paragraph feed for external indexers (Elasticsearch bulk, jq)")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s text [-json|-blocks] <archive.html>\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s text [-json|-blocks] <archive.html> ('-' = stdin)\n\n", os.Args[0])
 		fmt.Fprintln(os.Stderr, "-blocks emits NDJSON: each line is one paragraph-level block with the")
 		fmt.Fprintln(os.Stderr, "archive identity (url, capturedAt) repeated, so every line stands")
 		fmt.Fprintln(os.Stderr, "alone as an indexable document. Note the text is RAW rendered text —")
@@ -41,7 +41,7 @@ func runTextCommand(args []string) {
 		os.Exit(2)
 	}
 
-	layer, err := textlayer.FromFile(fs.Arg(0))
+	layer, err := loadLayer(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "parch: "+err.Error())
 		os.Exit(1)

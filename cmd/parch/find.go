@@ -50,7 +50,8 @@ func runFindCommand(args []string) {
 		fmt.Fprintln(os.Stderr, "newlines (from <br>) unless the pattern uses (?s).")
 		fmt.Fprintln(os.Stderr, "\nWith several files (or -r), output lines carry a file: prefix")
 		fmt.Fprintln(os.Stderr, "(-H forces it, -h suppresses it) and exit status is 0 when any")
-		fmt.Fprintln(os.Stderr, "file matched. Corpus idiom:")
+		fmt.Fprintln(os.Stderr, "file matched. `-` as an archive reads bytes from stdin; `--` ends")
+		fmt.Fprintln(os.Stderr, "options, so queries starting with a dash are searchable. Corpus idiom:")
 		fmt.Fprintf(os.Stderr, "  %s find -l -0 'phrase' *.html | xargs -0 -n1 %s mark 'phrase'\n", os.Args[0], os.Args[0])
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		fs.PrintDefaults()
@@ -117,11 +118,14 @@ func runFindCommand(args []string) {
 	filesSelected := 0
 	sawError := false
 	for _, path := range files {
-		layer, err := textlayer.FromFile(path)
+		layer, err := loadLayer(path)
 		if err != nil {
 			sawError = true
 			fmt.Fprintln(os.Stderr, "parch: "+err.Error())
 			continue
+		}
+		if path == stdinName {
+			path = "(stdin)"
 		}
 
 		// The per-file selection: hits, or with -v the blocks without one.

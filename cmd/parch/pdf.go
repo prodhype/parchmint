@@ -31,6 +31,7 @@ func runPdfCommand(args []string) {
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s pdf [-o out.pdf] [phrase ...] <archive.html|.mht>\n\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "'-' as the archive reads it from stdin (output then defaults to stdout).")
 		fmt.Fprintln(os.Stderr, "Renders an archive to a PDF with a searchable text layer (including")
 		fmt.Fprintln(os.Stderr, "text inside images, if the archive was `parch index`ed). Any phrases")
 		fmt.Fprintln(os.Stderr, "before the archive are highlighted, page text and image text alike;")
@@ -56,12 +57,24 @@ func runPdfCommand(args []string) {
 		os.Exit(2)
 	}
 
-	abs, err := filepath.Abs(path)
+	srcData, srcName, err := readArchive(path)
 	if err != nil {
 		die(err)
 	}
-	layer, err := textlayer.FromFile(abs)
+	layer, err := textlayer.FromBytes(srcData, srcName)
 	if err != nil {
+		die(err)
+	}
+
+	// The browser loads the archive over file://; a stdin archive is
+	// spilled to a temp file first (removed after the session ends).
+	var abs, tmp string
+	if path == stdinName {
+		if tmp, err = spillArchive(srcData); err != nil {
+			die(err)
+		}
+		abs = tmp
+	} else if abs, err = filepath.Abs(path); err != nil {
 		die(err)
 	}
 
@@ -74,11 +87,17 @@ func runPdfCommand(args []string) {
 		Colors: termColors,
 		Style:  *style,
 	})
+	if tmp != "" {
+		os.Remove(tmp) // session is over; the spilled stdin copy is done
+	}
 	if err != nil {
 		die(err)
 	}
 
 	dest := *output
+	if dest == "" && path == stdinName {
+		dest = "-" // stdin in, stdout out: no filename to derive from
+	}
 	switch dest {
 	case "-":
 		if _, err := os.Stdout.Write(res.PDF); err != nil {

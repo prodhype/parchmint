@@ -31,6 +31,7 @@ func runMarkCommand(args []string) {
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s mark [-grayscale] [-o out.html] <phrase> [phrase ...] <archive.html>\n\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "'-' as the archive reads it from stdin (output then defaults to stdout).")
 		fmt.Fprintln(os.Stderr, "Every argument before the archive is a phrase; all are highlighted")
 		fmt.Fprintln(os.Stderr, "(overlaps merge; with -c colors, the last phrase wins). Same matching")
 		fmt.Fprintln(os.Stderr, "as `parch find`, including its mode flags (-e regex, …). Run")
@@ -56,19 +57,27 @@ func runMarkCommand(args []string) {
 		os.Exit(2)
 	}
 
-	abs, err := filepath.Abs(path)
+	srcData, srcName, err := readArchive(path)
 	if err != nil {
 		die(err)
 	}
-	srcData, err := os.ReadFile(abs)
-	if err != nil {
-		die(err)
-	}
-	layer, err := textlayer.FromBytes(srcData, abs)
+	layer, err := textlayer.FromBytes(srcData, srcName)
 	if err != nil {
 		die(err)
 	}
 	isMHT := textlayer.IsMHT(srcData)
+
+	// The browser loads the archive over file://; a stdin archive is
+	// spilled to a temp file first (removed after the session ends).
+	var abs, tmp string
+	if path == stdinName {
+		if tmp, err = spillArchive(srcData); err != nil {
+			die(err)
+		}
+		abs = tmp
+	} else if abs, err = filepath.Abs(path); err != nil {
+		die(err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
 	defer cancel()
@@ -81,6 +90,9 @@ func runMarkCommand(args []string) {
 		Colors:    termColors,
 		Style:     *style,
 	})
+	if tmp != "" {
+		os.Remove(tmp) // session is over; the spilled stdin copy is done
+	}
 	if err != nil {
 		die(err)
 	}
@@ -105,6 +117,9 @@ func runMarkCommand(args []string) {
 	}
 
 	dest := *output
+	if dest == "" && path == stdinName {
+		dest = "-" // stdin in, stdout out: no filename to derive from
+	}
 	switch dest {
 	case "-":
 		if _, err := os.Stdout.Write(out); err != nil {
