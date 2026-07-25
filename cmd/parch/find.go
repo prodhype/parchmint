@@ -33,7 +33,9 @@ func runFindCommand(args []string) {
 	recurseDir := fs.String("r", "", "also search every archive under this directory (.html, .htm, .mht, .mhtml, .pdf)")
 	fs.StringVar(recurseDir, "recursive", "", "alias of -r")
 	fs.BoolVar(&withFile, "H", false, "always prefix output with the file name")
+	fs.BoolVar(&withFile, "with-filename", false, "alias of -H")
 	fs.BoolVar(&noFile, "h", false, "never prefix output with the file name (use -help for usage)")
+	fs.BoolVar(&noFile, "no-filename", false, "alias of -h")
 	fs.BoolVar(&nullSep, "0", false, "with -l: NUL-separated names, for xargs -0")
 	fs.BoolVar(&nullSep, "null", false, "alias of -0")
 	colorMode := fs.String("color", "auto", "colorize matches in human output: auto (only on a terminal), always, never")
@@ -62,7 +64,7 @@ func runFindCommand(args []string) {
 		"l": true, "files-with-matches": true,
 		"c": true, "count": true,
 		"q": true, "quiet": true,
-		"H": true, "h": true,
+		"H": true, "with-filename": true, "h": true, "no-filename": true,
 		"0": true, "null": true,
 	})))
 	if fs.NArg() < 2 && !(fs.NArg() == 1 && *recurseDir != "") {

@@ -106,7 +106,9 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&output, "o", "", "output file; '-' for stdout (default: config filename, else derived from URL)")
+	flag.StringVar(&output, "output", "", "alias of -o")
 	flag.StringVar(&format, "f", defFormat, "output format: html (self-contained page), mht, pdf, png, jpeg, webp")
+	flag.StringVar(&format, "format", defFormat, "alias of -f")
 	flag.StringVar(&links, "links", defLinks, "link policy: keep (unchanged), new-tab (external links open in a new tab), disable (links kept but unclickable)")
 	flag.StringVar(&rxFile, "rx", "", "run a .rx pscription as the prep before serializing (e.g. to log in first)")
 	flag.StringVar(&profile, "profile", "", "persistent Chrome user-data dir; log in once and reuse the session")
@@ -118,6 +120,7 @@ func main() {
 	flag.BoolVar(&text, "text", true, "embed the text layer in HTML archives (read back with `parch text <file>`)")
 	flag.Var(&highlight, "highlight", "wrap matches of this phrase in <mark> before capture (repeatable; same matching as `parch find`)")
 	flag.BoolVar(&verbose, "v", false, "debug logging")
+	flag.BoolVar(&verbose, "verbose", false, "alias of -v")
 	flag.Parse()
 
 	if flag.NArg() != 1 {
@@ -332,11 +335,23 @@ func resolveDest(explicitO bool, output string, cfg config.Config, url, title, e
 	return filepath.Join(outputDir, name), false
 }
 
+// captureAliases maps long flag spellings to the canonical short names
+// used in config-precedence checks, so `--format mht` counts as an
+// explicit -f.
+var captureAliases = map[string]string{"format": "f", "output": "o", "verbose": "v"}
+
 // explicitFlags reports which flags were actually given on the command line
 // (as opposed to left at their default), so config can fill only the rest.
+// Aliases are folded onto their canonical name.
 func explicitFlags() map[string]bool {
 	set := map[string]bool{}
-	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	flag.Visit(func(f *flag.Flag) {
+		name := f.Name
+		if canon, ok := captureAliases[name]; ok {
+			name = canon
+		}
+		set[name] = true
+	})
 	return set
 }
 

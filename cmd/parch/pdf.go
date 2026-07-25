@@ -23,10 +23,11 @@ import (
 func runPdfCommand(args []string) {
 	fs := flag.NewFlagSet("pdf", flag.ExitOnError)
 	output := fs.String("o", "", "output file (default <archive>.pdf; '-' for stdout)")
-	color := fs.String("color", "rgba(255, 220, 0, 0.45)", "highlight fill for matched image text")
+	fs.StringVar(output, "output", "", "alias of -o")
 	timeout := fs.Int("timeout", 120, "timeout in seconds")
 	var termColors stringsFlag
-	fs.Var(&termColors, "c", "highlight color for the Nth phrase (repeatable, pairs with phrases in order; unpaired phrases keep the default)")
+	fs.Var(&termColors, "c", "highlight color, repeatable: the Nth -c colors the Nth phrase; unpaired phrases keep the default yellow")
+	fs.Var(&termColors, "color", "alias of -c")
 	style := fs.String("style", "", "highlight style: bg (default), underline, box, or bold")
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
@@ -91,7 +92,7 @@ func runPdfCommand(args []string) {
 	defer cancel()
 
 	res, err := capture.ExportPDF(ctx, runner.DefaultConfig(), "file://"+abs, phrases, layer, capture.PDFOptions{
-		Color:  *color,
+		Color:  "rgba(255, 220, 0, 0.45)", // default overlay fill; -c/--color overrides per phrase
 		Match:  match.options(),
 		Colors: termColors,
 		Style:  *style,

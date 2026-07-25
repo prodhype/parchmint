@@ -22,11 +22,12 @@ import (
 func runMarkCommand(args []string) {
 	fs := flag.NewFlagSet("mark", flag.ExitOnError)
 	output := fs.String("o", "", "output file (default <archive>.marked.html; '-' for stdout)")
+	fs.StringVar(output, "output", "", "alias of -o")
 	grayscale := fs.Bool("grayscale", false, "mute images containing hits so the highlight pops")
-	color := fs.String("color", "rgba(255, 220, 0, 0.5)", "highlight fill for image hits")
 	timeout := fs.Int("timeout", 60, "timeout in seconds")
 	var termColors stringsFlag
-	fs.Var(&termColors, "c", "highlight color for the Nth phrase (repeatable, pairs with phrases in order; unpaired phrases keep the default)")
+	fs.Var(&termColors, "c", "highlight color, repeatable: the Nth -c colors the Nth phrase; unpaired phrases keep the default yellow")
+	fs.Var(&termColors, "color", "alias of -c")
 	style := fs.String("style", "", "highlight style: bg (default), underline, box, or bold")
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
@@ -93,7 +94,7 @@ func runMarkCommand(args []string) {
 
 	res, err := capture.MarkArchive(ctx, runner.DefaultConfig(), "file://"+abs, phrases, layer, capture.MarkOptions{
 		Grayscale: *grayscale,
-		Color:     *color,
+		Color:     "rgba(255, 220, 0, 0.5)", // default image fill; -c/--color overrides per phrase
 		Stroke:    "rgba(200, 160, 0, 0.9)",
 		Match:     match.options(),
 		Colors:    termColors,

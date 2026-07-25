@@ -28,6 +28,7 @@ func registerMatchFlags(fs *flag.FlagSet) *matchFlags {
 	fs.BoolVar(&m.regex, "e", false, "query is a Go regular expression, matched on raw text (case-sensitive; see -i)")
 	fs.BoolVar(&m.regex, "regex", false, "alias of -e")
 	fs.BoolVar(&m.ignoreCase, "i", false, "case-insensitive regex (only with -e)")
+	fs.BoolVar(&m.ignoreCase, "ignore-case", false, "alias of -i")
 	fs.IntVar(&m.fuzzy, "z", 0, "accept words within this edit distance (1-3) of each query word — for OCR'd text")
 	fs.IntVar(&m.fuzzy, "fuzzy", 0, "alias of -z")
 	fs.BoolVar(&m.wholeWord, "w", false, "match whole words only (\"phone\" no longer finds \"iPhone\")")
@@ -72,7 +73,7 @@ func validStyle(s string) error {
 // flag value).
 func matchBoolFlags(extra map[string]bool) map[string]bool {
 	out := map[string]bool{
-		"e": true, "regex": true, "i": true,
+		"e": true, "regex": true, "i": true, "ignore-case": true,
 		"w": true, "word": true,
 		"s": true, "case-sensitive": true,
 		"F": true, "fixed": true,
