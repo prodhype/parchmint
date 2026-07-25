@@ -95,6 +95,9 @@ func Compile(query string, opts MatchOptions) (Matcher, error) {
 	var core Matcher
 	switch {
 	case opts.Fixed:
+		if query == "" {
+			return nil, fmt.Errorf("fixed (-F) query is empty")
+		}
 		core = fixedMatcher{needle: []rune(query), caseSens: opts.CaseSens, wholeWord: opts.WholeWord}
 	case opts.Fuzzy != 0:
 		toks := tokenize(query, false, opts.CaseSens)
@@ -183,6 +186,9 @@ func (opts MatchOptions) validate() error {
 	if opts.Regex && opts.CaseSens {
 		return fmt.Errorf("-s does not apply to regex, which is case-sensitive unless -i")
 	}
+	if opts.IgnoreCase && !opts.Regex {
+		return fmt.Errorf("-i only applies to regex (-e); the other modes are case-insensitive already (opt out with -s)")
+	}
 	if opts.Fuzzy != 0 && (opts.Fuzzy < 0 || opts.Fuzzy > maxFuzzy) {
 		return fmt.Errorf("fuzzy distance must be between 1 and %d, got %d", maxFuzzy, opts.Fuzzy)
 	}
@@ -258,14 +264,14 @@ func fuzzyEqual(page, query string, dist int) bool {
 	return withinLevenshtein(p, q, dist)
 }
 
-// withinLevenshtein reports edit distance ≤ max, with the standard cheap
-// exits: the length difference bounds the distance from below, and a DP
-// row whose minimum already exceeds max can never recover.
-func withinLevenshtein(a, b []rune, max int) bool {
+// withinLevenshtein reports edit distance ≤ limit, with the standard
+// cheap exits: the length difference bounds the distance from below, and
+// a DP row whose minimum already exceeds the limit can never recover.
+func withinLevenshtein(a, b []rune, limit int) bool {
 	if len(a) > len(b) {
 		a, b = b, a
 	}
-	if len(b)-len(a) > max {
+	if len(b)-len(a) > limit {
 		return false
 	}
 	prev := make([]int, len(a)+1)
@@ -286,12 +292,12 @@ func withinLevenshtein(a, b []rune, max int) bool {
 				rowMin = cur[j]
 			}
 		}
-		if rowMin > max {
+		if rowMin > limit {
 			return false
 		}
 		prev, cur = cur, prev
 	}
-	return prev[len(a)] <= max
+	return prev[len(a)] <= limit
 }
 
 // fixedMatcher matches the query as a literal substring of raw

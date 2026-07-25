@@ -135,6 +135,13 @@ func runFindCommand(args []string) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 
+	// -q and -l only need to know WHETHER a file matched; stop at the
+	// first hit instead of collecting them all.
+	effMax := *maxCount
+	if quiet || listFiles {
+		effMax = 1
+	}
+
 	totalSelected := 0
 	filesSelected := 0
 	sawError := false
@@ -154,10 +161,10 @@ func runFindCommand(args []string) {
 		var blocks []*textlayer.Block
 		n := 0
 		if invert {
-			blocks = unmatchedBlocks(matcher, layer, *maxCount)
+			blocks = unmatchedBlocks(matcher, layer, effMax)
 			n = len(blocks)
 		} else {
-			hits = findHits(matcher, layer, *maxCount)
+			hits = findHits(matcher, layer, effMax)
 			n = len(hits)
 		}
 		totalSelected += n
@@ -197,7 +204,7 @@ func runFindCommand(args []string) {
 					box[0], box[1], h.Context(*context, openMark, closeMark))
 			}
 			for _, b := range blocks {
-				fmt.Printf("%s#%d %s  %s\n", prefixFor(path), b.ID, b.Type, snippet(b.Text, 2**context))
+				fmt.Printf("%s#%d %s  %s\n", prefixFor(path), b.ID, b.Type, snippet(b.Text, *context*2))
 			}
 		}
 	}

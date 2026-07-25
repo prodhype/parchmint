@@ -205,6 +205,8 @@ func TestModifierCombos(t *testing.T) {
 		{Fixed: true, Fuzzy: 1},
 		{Regex: true, WholeWord: true},
 		{Regex: true, CaseSens: true},
+		{IgnoreCase: true},           // -i without -e
+		{IgnoreCase: true, Fuzzy: 1}, // -i applies to regex only
 	}
 	for _, opts := range bad {
 		if _, err := Compile("word", opts); err == nil {
@@ -215,6 +217,10 @@ func TestModifierCombos(t *testing.T) {
 	got := compileStrings(t, "Music", MatchOptions{Fuzzy: 1, CaseSens: true}, "MUSI here and Musi there")
 	if len(got) != 1 || got[0] != "Musi" {
 		t.Errorf("fuzzy case-sensitive: got %v, want [Musi]", got)
+	}
+	// An empty -F query can never match; reject it like phrase mode does.
+	if _, err := Compile("", MatchOptions{Fixed: true}); err == nil {
+		t.Error("expected error for empty fixed query")
 	}
 }
 

@@ -57,6 +57,15 @@ func runPdfCommand(args []string) {
 		os.Exit(2)
 	}
 
+	// Fail fast on a bad query (a typo'd -e regex, a contradictory flag
+	// combo) BEFORE paying for a browser session; the capture layer
+	// compiles again per phrase, but by then compilation is known-good.
+	for _, p := range phrases {
+		if _, err := textlayer.Compile(p, match.options()); err != nil {
+			die(err)
+		}
+	}
+
 	srcData, srcName, err := readArchive(path)
 	if err != nil {
 		die(err)
