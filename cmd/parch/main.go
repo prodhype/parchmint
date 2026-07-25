@@ -44,27 +44,34 @@ const (
 	defTimeout = 300
 )
 
+// version identifies the build; stamp releases with
+// -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
+// subcommands maps each archive-ops command to its entry point — the
+// dispatch table for both main and `parch help <cmd>`.
+var subcommands = map[string]func([]string){
+	"text":  runTextCommand,
+	"lines": runLinesCommand,
+	"find":  runFindCommand,
+	"index": runIndexCommand,
+	"mark":  runMarkCommand,
+	"pdf":   runPdfCommand,
+}
+
 func main() {
 	// Subcommands (the capture flow stays the bare `parch <url>` form).
 	if len(os.Args) > 1 {
+		if run, ok := subcommands[os.Args[1]]; ok {
+			run(os.Args[2:])
+			return
+		}
 		switch os.Args[1] {
-		case "text":
-			runTextCommand(os.Args[2:])
+		case "version", "-version", "--version":
+			fmt.Println("parch " + version)
 			return
-		case "lines":
-			runLinesCommand(os.Args[2:])
-			return
-		case "find":
-			runFindCommand(os.Args[2:])
-			return
-		case "index":
-			runIndexCommand(os.Args[2:])
-			return
-		case "mark":
-			runMarkCommand(os.Args[2:])
-			return
-		case "pdf":
-			runPdfCommand(os.Args[2:])
+		case "help":
+			runHelpCommand(os.Args[2:])
 			return
 		}
 	}
@@ -84,7 +91,18 @@ func main() {
 	)
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <url>\n\nOptions:\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <url>              capture a page as one file\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "       %s <command> [options] <args>   work with captured archives\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "\nCommands:")
+		fmt.Fprintln(os.Stderr, "  text     plain text back out of an archive (-json: the raw layer; -blocks: NDJSON)")
+		fmt.Fprintln(os.Stderr, "  lines    one plain-text line per paragraph block")
+		fmt.Fprintln(os.Stderr, "  find     grep across archives' text layers (multi-file, -l/-c/-q/-r, regex/fuzzy)")
+		fmt.Fprintln(os.Stderr, "  index    OCR an archive's images into its text layer")
+		fmt.Fprintln(os.Stderr, "  mark     write a highlighted copy of an archive")
+		fmt.Fprintln(os.Stderr, "  pdf      render an archive to a searchable, highlighted PDF")
+		fmt.Fprintln(os.Stderr, "  version  print the parch version")
+		fmt.Fprintln(os.Stderr, "  help     usage for a command (`parch help find`)")
+		fmt.Fprintln(os.Stderr, "\nCapture options:")
 		flag.PrintDefaults()
 	}
 	flag.StringVar(&output, "o", "", "output file; '-' for stdout (default: config filename, else derived from URL)")
@@ -243,6 +261,22 @@ func main() {
 		With("bytes", len(snap.Bytes)).
 		With("duration", time.Since(start).Round(time.Second).String()).
 		Info("archived")
+}
+
+// runHelpCommand implements `parch help [cmd]`: the subcommand's own
+// usage (via its -help path), or the top-level usage without one.
+func runHelpCommand(args []string) {
+	if len(args) == 0 {
+		flag.Usage()
+		return
+	}
+	if run, ok := subcommands[args[0]]; ok {
+		run([]string{"-help"})
+		return
+	}
+	fmt.Fprintf(os.Stderr, "parch: unknown command %q\n", args[0])
+	flag.Usage()
+	os.Exit(2)
 }
 
 func backendFor(format string) capture.Backend {

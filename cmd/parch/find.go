@@ -36,6 +36,7 @@ func runFindCommand(args []string) {
 	fs.BoolVar(&noFile, "h", false, "never prefix output with the file name (use -help for usage)")
 	fs.BoolVar(&nullSep, "0", false, "with -l: NUL-separated names, for xargs -0")
 	fs.BoolVar(&nullSep, "null", false, "alias of -0")
+	colorMode := fs.String("color", "auto", "colorize matches in human output: auto (only on a terminal), always, never")
 	match := registerMatchFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s find [options] <query> <archive...>\n\n", os.Args[0])
@@ -74,6 +75,23 @@ func runFindCommand(args []string) {
 		os.Exit(2)
 	}
 
+	// ANSI SGR, grep's palette: bold red match, magenta file names.
+	// Plain when piped (auto), so downstream tools never see escapes.
+	var useColor bool
+	switch *colorMode {
+	case "always":
+		useColor = true
+	case "auto":
+		useColor = stdoutIsTerminal()
+	case "never":
+	default:
+		die(fmt.Errorf("unknown -color mode %q (want auto, always, or never)", *colorMode))
+	}
+	openMark, closeMark := "«", "»"
+	if useColor {
+		openMark, closeMark = "\x1b[01;31m«", "»\x1b[0m"
+	}
+
 	query := fs.Arg(0)
 	files := fs.Args()[1:]
 	if *recurseDir != "" {
@@ -105,10 +123,13 @@ func runFindCommand(args []string) {
 	multi := len(files) > 1 || *recurseDir != ""
 	showName := (withFile || multi) && !noFile
 	prefixFor := func(name string) string {
-		if showName {
-			return name + ":"
+		if !showName {
+			return ""
 		}
-		return ""
+		if useColor {
+			return "\x1b[35m" + name + "\x1b[0m:"
+		}
+		return name + ":"
 	}
 
 	enc := json.NewEncoder(os.Stdout)
@@ -173,7 +194,7 @@ func runFindCommand(args []string) {
 			for _, h := range hits {
 				box := h.Box()
 				fmt.Printf("%s#%d %s @%d,%d  %s\n", prefixFor(path), h.Block.ID, h.Block.Type,
-					box[0], box[1], h.Context(*context, "«", "»"))
+					box[0], box[1], h.Context(*context, openMark, closeMark))
 			}
 			for _, b := range blocks {
 				fmt.Printf("%s#%d %s  %s\n", prefixFor(path), b.ID, b.Type, snippet(b.Text, 2**context))
