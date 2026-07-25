@@ -23,6 +23,8 @@ go build -o bin/ ./cmd/...
 ./bin/parch -v https://…                         # per-step debug logs from both repos
 ./bin/parch text page.html                       # plain text back out of an archive
 ./bin/parch text -json page.html                 # the raw embedded text layer
+./bin/parch text -blocks page.html               # NDJSON, one paragraph block per line —
+                                                 # the export feed for external indexers
 ./bin/parch find "some phrase" page.html         # block-scoped phrase search (grep-like exit codes)
 ./bin/parch find -json "wild*card" page.html     # hits with boxes, machine-readable
 ./bin/parch -highlight "phrase" https://…        # pre-highlight at capture (repeatable; ALL backends,
