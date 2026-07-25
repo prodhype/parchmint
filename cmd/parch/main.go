@@ -117,8 +117,8 @@ func main() {
 	flag.IntVar(&timeout, "timeout", defTimeout, "timeout in seconds")
 	var highlight stringsFlag
 	flag.IntVar(&width, "width", 0, "viewport/layout width in px (0 = default 1600)")
-	flag.BoolVar(&text, "text", true, "embed the text layer in HTML archives (read back with `parch text <file>`)")
-	flag.Var(&highlight, "highlight", "wrap matches of this phrase in <mark> before capture (repeatable; same matching as `parch find`)")
+	flag.BoolVar(&text, "text", true, "embed the text layer in HTML archives (read back with 'parch text <file>')")
+	flag.Var(&highlight, "highlight", "wrap matches of this phrase in <mark> before capture (repeatable; same matching as 'parch find')")
 	flag.BoolVar(&verbose, "v", false, "debug logging")
 	flag.BoolVar(&verbose, "verbose", false, "alias of -v")
 	flag.Parse()

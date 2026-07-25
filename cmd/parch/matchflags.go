@@ -35,10 +35,10 @@ func registerMatchFlags(fs *flag.FlagSet) *matchFlags {
 	fs.BoolVar(&m.wholeWord, "word", false, "alias of -w")
 	fs.BoolVar(&m.caseSens, "s", false, "case-sensitive (accents and punctuation still fold)")
 	fs.BoolVar(&m.caseSens, "case-sensitive", false, "alias of -s")
-	fs.BoolVar(&m.fixed, "F", false, "literal substring of the raw text: no punctuation folding, no `*` wildcard")
+	fs.BoolVar(&m.fixed, "F", false, "literal substring of the raw text: no punctuation folding, no * wildcard")
 	fs.BoolVar(&m.fixed, "fixed", false, "alias of -F")
 	fs.StringVar(&m.inTypes, "in", "", "only match in blocks of these types, comma-separated (p,h1..h6,li,td,th,caption,pre,blockquote,img,other)")
-	fs.StringVar(&m.source, "source", "", "only match text from this source: ocr (inside images, needs `parch index`) or dom (page text)")
+	fs.StringVar(&m.source, "source", "", "only match text from this source: ocr (inside images, needs 'parch index') or dom (page text)")
 	return m
 }
 
