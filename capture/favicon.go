@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
@@ -20,7 +20,22 @@ import (
 	"github.com/goodblaster/errors"
 )
 
-const maxFaviconBytes = 1 << 20
+const (
+	maxFaviconBytes = 1 << 20
+
+	// maxFavicons bounds how many declared icons are embedded. Sites
+	// routinely declare a dozen sizes; the archive only needs enough for a
+	// renderer to pick from, and each one costs bytes forever.
+	maxFavicons = 6
+
+	// faviconTimeout is the budget for ONE icon fetch. Icons are
+	// decoration: a host that accepts the connection and then never
+	// answers must not hold up the capture, which is what a 30s client
+	// timeout did — a single unresponsive icon host turned a 5.8s capture
+	// into 35.7s. Fetches also run concurrently, so the whole step is
+	// bounded by this, not by this times the number of icons.
+	faviconTimeout = 3 * time.Second
+)
 
 type faviconDiscovery struct {
 	PageURL    string             `json:"pageURL"`
@@ -66,7 +81,7 @@ func captureFavicon(ctx context.Context) ([]faviconEmbed, int, error) {
 	return embeds, n, err
 }
 
-var faviconHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var faviconHTTPClient = &http.Client{Timeout: faviconTimeout}
 
 func discoverFavicons(ctx context.Context) (faviconDiscovery, error) {
 	const script = `(() => {
@@ -159,26 +174,50 @@ func faviconCookies(ctx context.Context, candidates []faviconCandidate) ([]*netw
 }
 
 func fetchFaviconEmbeds(ctx context.Context, client *http.Client, candidates []faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) []faviconEmbed {
-	var embeds []faviconEmbed
-	var fallback []faviconCandidate
+	var declared, fallback []faviconCandidate
 	for _, c := range candidates {
 		if c.Fallback {
 			fallback = append(fallback, c)
-			continue
-		}
-		if embed, ok := fetchFaviconEmbed(ctx, client, c, pageURL, userAgent, cookies); ok {
-			embeds = append(embeds, embed)
+		} else {
+			declared = append(declared, c)
 		}
 	}
-	if len(embeds) > 0 {
+	if embeds := fetchFaviconsParallel(ctx, client, declared, pageURL, userAgent, cookies); len(embeds) > 0 {
 		return embeds
 	}
-	for _, c := range fallback {
-		if embed, ok := fetchFaviconEmbed(ctx, client, c, pageURL, userAgent, cookies); ok {
-			return []faviconEmbed{embed}
-		}
+	// Only when nothing the page declared could be fetched: /favicon.ico.
+	if embeds := fetchFaviconsParallel(ctx, client, fallback, pageURL, userAgent, cookies); len(embeds) > 0 {
+		return embeds[:1]
 	}
 	return nil
+}
+
+// fetchFaviconsParallel fetches up to maxFavicons candidates concurrently
+// and returns the successful ones IN DECLARATION ORDER — a renderer picks
+// by rel/sizes, so the page's own ordering has to survive the concurrency.
+func fetchFaviconsParallel(ctx context.Context, client *http.Client, candidates []faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) []faviconEmbed {
+	if len(candidates) > maxFavicons {
+		candidates = candidates[:maxFavicons]
+	}
+	results := make([]faviconEmbed, len(candidates))
+	ok := make([]bool, len(candidates))
+	var wg sync.WaitGroup
+	for i, c := range candidates {
+		wg.Add(1)
+		go func(i int, c faviconCandidate) {
+			defer wg.Done()
+			results[i], ok[i] = fetchFaviconEmbed(ctx, client, c, pageURL, userAgent, cookies)
+		}(i, c)
+	}
+	wg.Wait()
+
+	embeds := make([]faviconEmbed, 0, len(candidates))
+	for i := range results {
+		if ok[i] {
+			embeds = append(embeds, results[i])
+		}
+	}
+	return embeds
 }
 
 func fetchFaviconEmbed(ctx context.Context, client *http.Client, c faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) (faviconEmbed, bool) {
@@ -202,6 +241,11 @@ func fetchFaviconEmbed(ctx context.Context, client *http.Client, c faviconCandid
 }
 
 func fetchFaviconHTTP(ctx context.Context, client *http.Client, c faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) ([]byte, string, error) {
+	// Bound this one fetch, independently of the capture's overall
+	// deadline: a hung icon host must cost seconds, not minutes.
+	ctx, cancel := context.WithTimeout(ctx, faviconTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL, nil)
 	if err != nil {
 		return nil, "", err
@@ -430,13 +474,132 @@ func injectFavicons(ctx context.Context, embeds []faviconEmbed) (int, error) {
 	return updated, nil
 }
 
-var faviconLinkRe = regexp.MustCompile(`(?is)<link\b[^>]*\brel\s*=\s*(?:"[^"]*(?:\bicon\b|apple-touch-icon|apple-touch-icon-precomposed|mask-icon)[^"]*"|'[^']*(?:\bicon\b|apple-touch-icon|apple-touch-icon-precomposed|mask-icon)[^']*'|[^\s>]*(?:icon|apple-touch-icon|apple-touch-icon-precomposed|mask-icon)[^\s>]*)[^>]*>`)
+// stripIconLinks removes every <link> element whose rel marks it as an
+// icon. It scans rather than pattern-matches: an attribute value may
+// legally contain '>', which truncates a `[^>]*`-style regex mid-tag and
+// leaves the remainder behind as text in the document — silent corruption
+// of an archive, e.g. `<link rel="icon" title="a>b" href="/f.ico">`
+// leaving `b" href="/f.ico">` visible on the page.
+func stripIconLinks(html []byte) []byte {
+	lower := bytes.ToLower(html)
+	out := make([]byte, 0, len(html))
+	needle := []byte("<link")
+	for i := 0; i < len(html); {
+		rel := bytes.Index(lower[i:], needle)
+		if rel == -1 {
+			out = append(out, html[i:]...)
+			break
+		}
+		start := i + rel
+		after := start + len(needle)
+		if after < len(html) && isTagNameChar(lower[after]) {
+			// <linkfoo…> is a different element; keep scanning past it.
+			out = append(out, html[i:after]...)
+			i = after
+			continue
+		}
+		end := tagEnd(html, start)
+		if end == -1 {
+			out = append(out, html[i:]...)
+			break
+		}
+		out = append(out, html[i:start]...)
+		if !isFaviconRel(tagAttrValue(html[start:end], "rel")) {
+			out = append(out, html[start:end]...)
+		}
+		i = end
+	}
+	return out
+}
+
+// tagEnd returns the index just past the '>' closing the tag that starts
+// at start, honoring quoted attribute values (which may contain '>').
+func tagEnd(html []byte, start int) int {
+	var quote byte
+	for i := start; i < len(html); i++ {
+		switch c := html[i]; {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '>':
+			return i + 1
+		}
+	}
+	return -1
+}
+
+// tagAttrValue reads one attribute out of a complete tag, quote-aware.
+// Returns "" when the attribute is absent or valueless.
+func tagAttrValue(tag []byte, want string) string {
+	i := 1 // past '<'
+	for i < len(tag) && !isTagDelim(tag[i]) {
+		i++
+	}
+	for i < len(tag) {
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		if i >= len(tag) || tag[i] == '>' || tag[i] == '/' {
+			break
+		}
+		nameStart := i
+		for i < len(tag) && !isASCIISpace(tag[i]) && tag[i] != '=' && tag[i] != '>' && tag[i] != '/' {
+			i++
+		}
+		name := strings.ToLower(string(tag[nameStart:i]))
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		if i >= len(tag) || tag[i] != '=' {
+			if name == want {
+				return ""
+			}
+			continue
+		}
+		i++ // past '='
+		for i < len(tag) && isASCIISpace(tag[i]) {
+			i++
+		}
+		var value string
+		if i < len(tag) && (tag[i] == '"' || tag[i] == '\'') {
+			q := tag[i]
+			i++
+			valStart := i
+			for i < len(tag) && tag[i] != q {
+				i++
+			}
+			value = string(tag[valStart:i])
+			if i < len(tag) {
+				i++
+			}
+		} else {
+			valStart := i
+			for i < len(tag) && !isASCIISpace(tag[i]) && tag[i] != '>' {
+				i++
+			}
+			value = string(tag[valStart:i])
+		}
+		if name == want {
+			return value
+		}
+	}
+	return ""
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f'
+}
+
+func isTagDelim(b byte) bool { return isASCIISpace(b) || b == '>' || b == '/' }
 
 func embedFaviconsInHTML(html []byte, embeds []faviconEmbed) []byte {
 	if len(embeds) == 0 {
 		return html
 	}
-	html = faviconLinkRe.ReplaceAll(html, nil)
+	html = stripIconLinks(html)
 
 	var tags bytes.Buffer
 	tags.WriteByte('\n')
@@ -485,16 +648,16 @@ func htmlInsertAfterTag(html []byte, name string) int {
 			return -1
 		}
 		start := offset + relStart
-		end := start + len(needle)
-		if end < len(lower) && isTagNameChar(lower[end]) {
-			offset = end
+		nameEnd := start + len(needle)
+		if nameEnd < len(lower) && isTagNameChar(lower[nameEnd]) {
+			offset = nameEnd
 			continue
 		}
-		relEnd := bytes.IndexByte(html[start:], '>')
-		if relEnd == -1 {
+		end := tagEnd(html, start)
+		if end == -1 {
 			return -1
 		}
-		return start + relEnd + 1
+		return end
 	}
 	return -1
 }

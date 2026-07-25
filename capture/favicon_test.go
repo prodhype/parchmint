@@ -3,10 +3,12 @@ package capture
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsFaviconRel(t *testing.T) {
@@ -120,5 +122,100 @@ func TestEmbedFaviconsInHTMLWithoutHead(t *testing.T) {
 	}
 	if strings.Index(out, `rel="icon"`) > strings.Index(out, `<body`) {
 		t.Fatalf("embedFaviconsInHTML inserted icon in body: %s", out)
+	}
+}
+
+// A '>' inside a quoted attribute used to truncate the tag match and leave
+// the remainder in the document as text.
+func TestStripIconLinksQuotedAngleBracket(t *testing.T) {
+	html := []byte(`<head><link rel="icon" title="a>b" href="/f.ico"><meta name=keep></head>`)
+	out := string(stripIconLinks(html))
+	if strings.Contains(out, "/f.ico") || strings.Contains(out, `b"`) {
+		t.Fatalf("icon link not cleanly removed: %s", out)
+	}
+	if !strings.Contains(out, `<meta name=keep>`) {
+		t.Fatalf("following element was damaged: %s", out)
+	}
+}
+
+func TestStripIconLinksLeavesOthers(t *testing.T) {
+	cases := []string{
+		`<link rel="stylesheet" href="/icons/site.css">`,
+		`<link rel="preload" as="image" href="/icon.png">`,
+		`<linkage rel="icon" href="/x.ico">`, // not a <link> element
+	}
+	for _, c := range cases {
+		if out := string(stripIconLinks([]byte(c))); out != c {
+			t.Errorf("stripIconLinks(%q) = %q, want unchanged", c, out)
+		}
+	}
+	for _, c := range []string{
+		`<link rel=icon href="/f.ico">`,
+		`<link rel='shortcut icon' href="/f.ico">`,
+		`<link REL="Apple-Touch-Icon" href="/f.png">`,
+	} {
+		if out := string(stripIconLinks([]byte(c))); out != "" {
+			t.Errorf("stripIconLinks(%q) = %q, want empty", c, out)
+		}
+	}
+}
+
+func TestTagAttrValue(t *testing.T) {
+	tag := []byte(`<link rel="shortcut icon" href='/a>b.ico' data-x sizes=32x32>`)
+	for _, tt := range []struct{ attr, want string }{
+		{"rel", "shortcut icon"},
+		{"href", "/a>b.ico"},
+		{"sizes", "32x32"},
+		{"data-x", ""},
+		{"missing", ""},
+	} {
+		if got := tagAttrValue(tag, tt.attr); got != tt.want {
+			t.Errorf("tagAttrValue(%q) = %q, want %q", tt.attr, got, tt.want)
+		}
+	}
+}
+
+// An unresponsive icon host must cost one timeout, not the capture.
+func TestFetchFaviconEmbedsBoundsSlowHosts(t *testing.T) {
+	// Defers run LIFO: srv.Close() waits for in-flight handlers, so the
+	// unblock must be registered AFTER it to run BEFORE it.
+	blocked := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blocked // accept, then never answer
+	}))
+	defer srv.Close()
+	defer close(blocked)
+
+	var candidates []faviconCandidate
+	for i := 0; i < 4; i++ {
+		candidates = append(candidates, faviconCandidate{URL: fmt.Sprintf("%s/i%d.png", srv.URL, i), Rel: "icon"})
+	}
+
+	start := time.Now()
+	embeds := fetchFaviconEmbeds(context.Background(), srv.Client(), candidates, "", "", nil)
+	elapsed := time.Since(start)
+
+	if len(embeds) != 0 {
+		t.Fatalf("expected no embeds from a dead host, got %d", len(embeds))
+	}
+	// Concurrent + per-request budget: about one timeout, not four.
+	if elapsed > 2*faviconTimeout {
+		t.Fatalf("took %s for %d dead icons; want ~%s (concurrent, per-request timeout)", elapsed, len(candidates), faviconTimeout)
+	}
+}
+
+func TestFetchFaviconEmbedsCapsCount(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte{0x89, 'P', 'N', 'G'})
+	}))
+	defer srv.Close()
+
+	var candidates []faviconCandidate
+	for i := 0; i < maxFavicons+5; i++ {
+		candidates = append(candidates, faviconCandidate{URL: fmt.Sprintf("%s/i%d.png", srv.URL, i), Rel: "icon"})
+	}
+	if got := len(fetchFaviconEmbeds(context.Background(), srv.Client(), candidates, "", "", nil)); got != maxFavicons {
+		t.Fatalf("embedded %d icons, want the cap of %d", got, maxFavicons)
 	}
 }
