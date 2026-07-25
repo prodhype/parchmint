@@ -8,7 +8,7 @@ require (
 	github.com/chromedp/chromedp v0.16.0
 	github.com/goodblaster/errors v0.1.0
 	github.com/goodblaster/logos v0.2.0
-	github.com/goodblaster/pscription v0.0.4
+	github.com/goodblaster/pscription v0.0.5
 	github.com/pdfcpu/pdfcpu v0.13.0
 	golang.org/x/image v0.44.0
 	golang.org/x/text v0.40.0
