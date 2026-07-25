@@ -22,12 +22,8 @@ github.com/goodblaster/errors v0.1.0 h1:3ZWmlbJgEF3Z3etFFHP3TdhwWU1ODxTAHWf31LHY
 github.com/goodblaster/errors v0.1.0/go.mod h1:7mOJtwZZ8ZOGzUPOLDR6iNqxQiBwBQUWAsMox2HLuDY=
 github.com/goodblaster/logos v0.2.0 h1:WiSrfycj+rzrlTlPsj7QnQMilKAYUi5KXj5ZoDQ8ZY8=
 github.com/goodblaster/logos v0.2.0/go.mod h1:m6ewgVADd401e7F4630nczg6LL4MPi9UoE4jL+X8fmY=
-github.com/goodblaster/pscription v0.0.3 h1:bqiKl5eWB9+bT2iaBQxL6W8/Zc3oWAmBNrBu/jMG+xA=
-github.com/goodblaster/pscription v0.0.3/go.mod h1:jWtnR43+F2KJssIglU5dUl7uWbwRN+OWlfh5byCcZz0=
-github.com/goodblaster/pscription v0.0.4 h1:fNvpm/hSX251ti3QOpkHAHRLgxq8kWZ9EciDTMNAi44=
-github.com/goodblaster/pscription v0.0.4/go.mod h1:jWtnR43+F2KJssIglU5dUl7uWbwRN+OWlfh5byCcZz0=
-github.com/goodblaster/pscription v0.0.5 h1:s8WZ7UOAIsDCz6uot/Z2OySFQ3nI+X/L06HSicZxpAA=
-github.com/goodblaster/pscription v0.0.5/go.mod h1:jWtnR43+F2KJssIglU5dUl7uWbwRN+OWlfh5byCcZz0=
+github.com/goodblaster/pscription v0.0.6 h1:fD86/9oG01SWD5DkLYlhu11T+kxC3+wnD3pNznYaEts=
+github.com/goodblaster/pscription v0.0.6/go.mod h1:jWtnR43+F2KJssIglU5dUl7uWbwRN+OWlfh5byCcZz0=
 github.com/hhrutter/lzw v1.0.0 h1:laL89Llp86W3rRs83LvKbwYRx6INE8gDn0XNb1oXtm0=
 github.com/hhrutter/lzw v1.0.0/go.mod h1:2HC6DJSn/n6iAZfgM3Pg+cP1KxeWc3ezG8bBqW5+WEo=
 github.com/hhrutter/pkcs7 v0.2.2 h1:xMoifoVWah1LNym3C0pomEiLmyJyVIBXt/8oTPyPz+8=
