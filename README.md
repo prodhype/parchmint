@@ -36,6 +36,8 @@ parch -f jpeg https://example.com          # full-page screenshot (smaller)
 parch -links new-tab https://example.com   # external links open in a new tab
 parch -links disable https://example.com   # links kept but unclickable
 parch -favicon=false https://example.com   # skip embedding the page favicon
+                                           #   (embedded as a data URI: shown by
+                                           #    Chromium/Firefox, ignored by Safari)
 parch https://example.com > page.html      # content on stdout when piped
 parch text page.html                       # rendered text back out of an archive
 parch lines page.html                      # one plain-text line per paragraph — pipe food

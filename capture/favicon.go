@@ -59,6 +59,14 @@ type faviconEmbed struct {
 	Fallback bool   `json:"fallback"`
 }
 
+// Known limitation, confirmed by testing, not worth re-investigating:
+// Safari does not render data: URI favicons, so an archive opened there
+// shows no icon no matter what this writes. Chromium and Firefox do. The
+// icons are still worth embedding — the archive is self-contained and
+// correct, a future WebKit may honor them, and a catalog over many
+// archives (see README "Planned") can read them straight out of the file
+// without a browser.
+//
 // captureFavicon collects the page's icons and returns them as data URIs
 // for a backend to write into the serialized archive. It deliberately does
 // NOT touch the live DOM: SingleFile drops icon links during serialization
