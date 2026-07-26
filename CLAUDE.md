@@ -57,6 +57,8 @@ Config file precedence: CLI flags → `./.parch/config` (nearest ancestor) → `
 
 Backends read per-capture settings from the `Snapshot` (e.g. `ViewportWidth` for PDF paper sizing) — never from globals.
 
+**Favicons** (`capture/favicon.go`, `-favicon`, on by default for html/mht): the page's icon links are fetched server-side, inlined as data URIs, and written into the SERIALIZED document by the HTML and MHT backends — the live DOM is deliberately untouched, because SingleFile drops icon links during serialization and the MHT path rewrites the document part regardless. Two things are load-bearing: icons are decoration, so each fetch gets a short budget (`faviconTimeout`) and they run concurrently — a host that accepts a connection and never answers once turned a 5.8s capture into 35.7s; and the serialized HTML is edited with a quote-aware scanner (`tagEnd`/`tagAttrValue`), never a regex, because `[^>]*` cannot skip a `>` inside an attribute value and a truncated match leaves fragments behind as visible text in the archive.
+
 ## Hard-won invariants (violating these caused real bugs)
 
 - SingleFile capture must pass `blockScripts: true` (this vendored bundle's option name — it has no `removeScripts`). Keeping site JS means age gates re-run when the snapshot is opened.

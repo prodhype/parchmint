@@ -40,6 +40,10 @@ type Snapshot struct {
 	// backend embeds it. Nil when extraction was off or failed.
 	TextLayer []byte
 
+	// favicons are the page's icons, fetched and inlined as data URIs when
+	// Options.Favicon is set. The HTML and MHT backends write them into the
+	// serialized document (embedFaviconsInHTML); the live DOM is left
+	// alone, since SingleFile drops icon links anyway.
 	favicons []faviconEmbed
 }
 
@@ -49,8 +53,11 @@ type Options struct {
 	// page into Snapshot.TextLayer, for backends that can embed it.
 	TextLayer bool
 
-	// Favicon inlines the page's favicon link(s) into the prepared DOM before
-	// serialization, for archive backends that preserve HTML head metadata.
+	// Favicon collects the page's icon(s) as data URIs for the HTML and
+	// MHT backends to embed, so an archive keeps its identity in a tab
+	// with no network. Icons are decoration: a slow or dead icon host is
+	// given a short budget and then skipped, never allowed to hold up a
+	// capture.
 	Favicon bool
 
 	// Highlight wraps every match of these phrases in

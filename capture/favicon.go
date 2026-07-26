@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -60,8 +59,13 @@ type faviconEmbed struct {
 	Fallback bool   `json:"fallback"`
 }
 
-// captureFavicon inlines the page's icon links as data URIs in the live DOM.
-// HTML-like backends then serialize those links without a network dependency.
+// captureFavicon collects the page's icons and returns them as data URIs
+// for a backend to write into the serialized archive. It deliberately does
+// NOT touch the live DOM: SingleFile drops icon links during serialization
+// and the MHT path rewrites the document anyway, so both backends embed
+// from these values (see embedFaviconsInHTML). Verified by disabling an
+// earlier DOM-injection step: both formats still carry their icons, and
+// the MHT keeps no external icon href.
 func captureFavicon(ctx context.Context) ([]faviconEmbed, int, error) {
 	discovery, err := discoverFavicons(ctx)
 	if err != nil {
@@ -72,37 +76,28 @@ func captureFavicon(ctx context.Context) ([]faviconEmbed, int, error) {
 		return nil, 0, nil
 	}
 
-	cookies, _ := faviconCookies(ctx, candidates)
+	// Cookie headers are resolved here, before the concurrent fetch: each
+	// lookup is a CDP round-trip and the session is not safe to drive from
+	// several goroutines at once.
+	cookies := faviconCookieHeaders(ctx, candidates)
 	embeds := fetchFaviconEmbeds(ctx, faviconHTTPClient, candidates, discovery.PageURL, discovery.UserAgent, cookies)
-	if len(embeds) == 0 {
-		return nil, 0, nil
-	}
-	n, err := injectFavicons(ctx, embeds)
-	return embeds, n, err
+	return embeds, len(embeds), nil
 }
 
 var faviconHTTPClient = &http.Client{Timeout: faviconTimeout}
 
 func discoverFavicons(ctx context.Context) (faviconDiscovery, error) {
+	// Every link[rel][href] is returned and filtered Go-side by
+	// isFaviconRel, so the rule for "is this an icon" lives in exactly one
+	// place instead of being spelled out again in page script.
 	const script = `(() => {
-		const isIconRel = rel => {
-			const text = String(rel || "").toLowerCase().trim();
-			if (!text) return false;
-			const tokens = text.split(/\s+/);
-			return tokens.includes("icon") ||
-				tokens.includes("apple-touch-icon") ||
-				tokens.includes("apple-touch-icon-precomposed") ||
-				tokens.includes("mask-icon");
-		};
 		const candidates = [];
 		const base = document.baseURI || location.href;
 		for (const el of document.querySelectorAll("link[rel][href]")) {
-			const rel = el.getAttribute("rel") || "";
-			if (!isIconRel(rel)) continue;
 			try {
 				candidates.push({
 					url: new URL(el.getAttribute("href"), base).href,
-					rel,
+					rel: el.getAttribute("rel") || "",
 					type: el.getAttribute("type") || "",
 					sizes: el.getAttribute("sizes") || ""
 				});
@@ -160,20 +155,39 @@ func isFaviconRel(rel string) bool {
 	return false
 }
 
-func faviconCookies(ctx context.Context, candidates []faviconCandidate) ([]*network.Cookie, error) {
-	urls := make([]string, 0, len(candidates))
+// faviconCookieHeaders maps each http(s) candidate URL to the Cookie
+// header Chrome would send for it. Asking the browser per URL keeps cookie
+// scoping (domain, path, secure, host-only) as the ONE implementation that
+// already governs the page — the previous hand-rolled matcher had to
+// re-derive RFC 6265 rules and could not see host-only cookies at all.
+func faviconCookieHeaders(ctx context.Context, candidates []faviconCandidate) map[string]string {
+	headers := map[string]string{}
 	for _, c := range candidates {
-		if strings.HasPrefix(c.URL, "http://") || strings.HasPrefix(c.URL, "https://") {
-			urls = append(urls, c.URL)
+		if !strings.HasPrefix(c.URL, "http://") && !strings.HasPrefix(c.URL, "https://") {
+			continue
+		}
+		if _, done := headers[c.URL]; done {
+			continue
+		}
+		cookies, err := network.GetCookies().WithURLs([]string{c.URL}).Do(ctx)
+		if err != nil || len(cookies) == 0 {
+			continue
+		}
+		parts := make([]string, 0, len(cookies))
+		for _, cookie := range cookies {
+			if cookie.Name == "" {
+				continue
+			}
+			parts = append(parts, (&http.Cookie{Name: cookie.Name, Value: cookie.Value}).String())
+		}
+		if len(parts) > 0 {
+			headers[c.URL] = strings.Join(parts, "; ")
 		}
 	}
-	if len(urls) == 0 {
-		return nil, nil
-	}
-	return network.GetCookies().WithURLs(urls).Do(ctx)
+	return headers
 }
 
-func fetchFaviconEmbeds(ctx context.Context, client *http.Client, candidates []faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) []faviconEmbed {
+func fetchFaviconEmbeds(ctx context.Context, client *http.Client, candidates []faviconCandidate, pageURL, userAgent string, cookies map[string]string) []faviconEmbed {
 	var declared, fallback []faviconCandidate
 	for _, c := range candidates {
 		if c.Fallback {
@@ -195,7 +209,7 @@ func fetchFaviconEmbeds(ctx context.Context, client *http.Client, candidates []f
 // fetchFaviconsParallel fetches up to maxFavicons candidates concurrently
 // and returns the successful ones IN DECLARATION ORDER — a renderer picks
 // by rel/sizes, so the page's own ordering has to survive the concurrency.
-func fetchFaviconsParallel(ctx context.Context, client *http.Client, candidates []faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) []faviconEmbed {
+func fetchFaviconsParallel(ctx context.Context, client *http.Client, candidates []faviconCandidate, pageURL, userAgent string, cookies map[string]string) []faviconEmbed {
 	if len(candidates) > maxFavicons {
 		candidates = candidates[:maxFavicons]
 	}
@@ -220,7 +234,7 @@ func fetchFaviconsParallel(ctx context.Context, client *http.Client, candidates 
 	return embeds
 }
 
-func fetchFaviconEmbed(ctx context.Context, client *http.Client, c faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) (faviconEmbed, bool) {
+func fetchFaviconEmbed(ctx context.Context, client *http.Client, c faviconCandidate, pageURL, userAgent string, cookies map[string]string) (faviconEmbed, bool) {
 	if strings.HasPrefix(c.URL, "data:") {
 		mimeType := faviconMIMEFromDataURI(c.URL)
 		return faviconEmbed{URL: c.URL, Rel: faviconRel(c), MIME: mimeType, Sizes: c.Sizes, DataURI: c.URL, Fallback: c.Fallback}, true
@@ -240,7 +254,7 @@ func fetchFaviconEmbed(ctx context.Context, client *http.Client, c faviconCandid
 	}, true
 }
 
-func fetchFaviconHTTP(ctx context.Context, client *http.Client, c faviconCandidate, pageURL, userAgent string, cookies []*network.Cookie) ([]byte, string, error) {
+func fetchFaviconHTTP(ctx context.Context, client *http.Client, c faviconCandidate, pageURL, userAgent string, cookies map[string]string) ([]byte, string, error) {
 	// Bound this one fetch, independently of the capture's overall
 	// deadline: a hung icon host must cost seconds, not minutes.
 	ctx, cancel := context.WithTimeout(ctx, faviconTimeout)
@@ -257,7 +271,7 @@ func fetchFaviconHTTP(ctx context.Context, client *http.Client, c faviconCandida
 	if userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
-	if cookieHeader := faviconCookieHeader(c.URL, cookies); cookieHeader != "" {
+	if cookieHeader := cookies[c.URL]; cookieHeader != "" {
 		req.Header.Set("Cookie", cookieHeader)
 	}
 
@@ -293,42 +307,6 @@ func readLimited(r io.Reader, max int64) ([]byte, error) {
 		return nil, fmt.Errorf("favicon exceeds %d bytes", max)
 	}
 	return data, nil
-}
-
-func faviconCookieHeader(rawURL string, cookies []*network.Cookie) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
-	}
-	var parts []string
-	for _, c := range cookies {
-		if faviconCookieMatchesURL(c, u) {
-			parts = append(parts, (&http.Cookie{Name: c.Name, Value: c.Value}).String())
-		}
-	}
-	return strings.Join(parts, "; ")
-}
-
-func faviconCookieMatchesURL(c *network.Cookie, u *url.URL) bool {
-	if c == nil || c.Name == "" || u == nil {
-		return false
-	}
-	if c.Secure && u.Scheme != "https" {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	domain := strings.ToLower(strings.TrimPrefix(c.Domain, "."))
-	if domain == "" || (host != domain && !strings.HasSuffix(host, "."+domain)) {
-		return false
-	}
-	cookiePath := c.Path
-	if cookiePath == "" {
-		cookiePath = "/"
-	}
-	if !strings.HasPrefix(u.EscapedPath()+"/", strings.TrimRight(cookiePath, "/")+"/") {
-		return false
-	}
-	return true
 }
 
 func faviconMIME(c faviconCandidate, contentType string, data []byte) string {
@@ -415,63 +393,6 @@ func faviconRel(c faviconCandidate) string {
 		return c.Rel
 	}
 	return "icon"
-}
-
-func injectFavicons(ctx context.Context, embeds []faviconEmbed) (int, error) {
-	payload, err := json.Marshal(embeds)
-	if err != nil {
-		return 0, errors.Wrap(err, "marshal favicon embeds")
-	}
-	script := fmt.Sprintf(`(() => {
-		const entries = %s;
-		const isIconRel = rel => {
-			const text = String(rel || "").toLowerCase().trim();
-			const tokens = text.split(/\s+/);
-			return tokens.includes("icon") ||
-				tokens.includes("apple-touch-icon") ||
-				tokens.includes("apple-touch-icon-precomposed") ||
-				tokens.includes("mask-icon");
-		};
-		const head = (() => {
-			if (document.head) return document.head;
-			const el = document.createElement("head");
-			document.documentElement.insertBefore(el, document.body || document.documentElement.firstChild);
-			return el;
-		})();
-		const iconLinks = () => Array.from(document.querySelectorAll("link[rel][href]"))
-			.filter(el => isIconRel(el.getAttribute("rel")));
-		let updated = 0;
-		for (const entry of entries) {
-			let matched = false;
-			for (const el of iconLinks()) {
-				let href;
-				try { href = new URL(el.getAttribute("href"), document.baseURI || location.href).href; }
-				catch (_) { continue; }
-				if (href !== entry.url) continue;
-				el.setAttribute("href", entry.dataURI);
-				if (entry.mime) el.setAttribute("type", entry.mime);
-				if (entry.sizes) el.setAttribute("sizes", entry.sizes);
-				matched = true;
-				updated++;
-			}
-			if (!matched) {
-				const el = document.createElement("link");
-				el.setAttribute("rel", entry.rel || "icon");
-				el.setAttribute("href", entry.dataURI);
-				if (entry.mime) el.setAttribute("type", entry.mime);
-				if (entry.sizes) el.setAttribute("sizes", entry.sizes);
-				head.appendChild(el);
-				updated++;
-			}
-		}
-		return updated;
-	})()`, payload)
-
-	var updated int
-	if err := chromedp.Evaluate(script, &updated).Do(ctx); err != nil {
-		return 0, errors.Wrap(err, "inject favicon links")
-	}
-	return updated, nil
 }
 
 // stripIconLinks removes every <link> element whose rel marks it as an
